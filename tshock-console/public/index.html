@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TShock 服务器控制台</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="wrap">
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="dot" id="connDot"></span>
+      <h1>TSHOCK <span class="thin">服务器控制台</span></h1>
+    </div>
+    <div class="connstate" id="connState">未连接</div>
+  </header>
+
+  <!-- 连接面板 -->
+  <section class="panel connect-panel" id="connectPanel">
+    <div class="panel-head" onclick="toggle('connectPanel')">
+      <span>连接设置</span><span class="caret">▾</span>
+    </div>
+    <div class="panel-body">
+      <div class="field">
+        <label>REST 地址（含端口）</label>
+        <input id="restUrl" placeholder="http://127.0.0.1:7878" value="http://127.0.0.1:7878">
+        <p class="hint">例：<code>http://服务器IP:7878</code>。留空或不填则进入演示模式。</p>
+      </div>
+      <div class="field">
+        <label>鉴权方式</label>
+        <select id="authMode">
+          <option value="apikey">应用密钥（ApplicationRestTokens 的 key，直接当 token 用）</option>
+          <option value="account">TShock 账号密码（自动换取 token）</option>
+        </select>
+      </div>
+      <div class="row">
+        <div class="field grow" id="appKeyWrap">
+          <label>应用密钥 AppKey</label>
+          <input id="appKey" type="password" placeholder="tshock.json 里的 ApplicationRestTokens key">
+        </div>
+      </div>
+      <div class="row" id="accountWrap" style="display:none">
+        <div class="field grow"><label>账号</label><input id="acctUser" placeholder="superadmin 或具 restapi 权限的账号"></div>
+        <div class="field grow"><label>密码</label><input id="acctPass" type="password"></div>
+      </div>
+      <div class="actions">
+        <button class="btn primary" id="btnConnect">连接</button>
+        <button class="btn ghost" id="btnDemo">演示模式</button>
+        <span id="connectMsg" class="msg"></span>
+      </div>
+    </div>
+  </section>
+
+  <!-- 状态卡片 -->
+  <section class="cards" id="statusCards">
+    <div class="card"><span class="k">在线玩家</span><span class="v" id="stPlayers">-</span></div>
+    <div class="card"><span class="k">上限</span><span class="v" id="stMax">-</span></div>
+    <div class="card"><span class="k">世界</span><span class="v sm" id="stWorld">-</span></div>
+    <div class="card"><span class="k">版本</span><span class="v sm" id="stVer">-</span></div>
+    <div class="card"><span class="k">运行时长</span><span class="v sm" id="stUptime">-</span></div>
+    <div class="card"><span class="k">端口</span><span class="v" id="stPort">-</span></div>
+  </section>
+
+  <!-- 在线玩家 -->
+  <section class="panel">
+    <div class="panel-head"><span>在线玩家 <b id="playerCount">0</b></span><button class="mini" onclick="loadPlayers()">刷新</button></div>
+    <div class="panel-body"><div id="playerList" class="player-list"><div class="empty">暂无玩家数据</div></div></div>
+  </section>
+
+  <!-- 广播 -->
+  <section class="panel">
+    <div class="panel-head"><span>广播公告</span></div>
+    <div class="panel-body">
+      <div class="row">
+        <input id="bcMsg" class="grow" placeholder="要广播给所有玩家的消息，如：停机维护，稍后回来">
+        <button class="btn primary" onclick="doBroadcast()">广播</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 快捷操作 -->
+  <section class="panel">
+    <div class="panel-head"><span>服务器快捷操作</span></div>
+    <div class="panel-body actions">
+      <button class="btn" onclick="doAction('save')">保存世界</button>
+      <button class="btn" onclick="doAction('reload')">重载配置</button>
+      <button class="btn warn" onclick="doAction('restart')">重启服务器</button>
+      <button class="btn danger" onclick="doAction('off')">停服</button>
+    </div>
+  </section>
+
+  <!-- 指令控制台 -->
+  <section class="panel console">
+    <div class="panel-head"><span>控制台指令</span><button class="mini" onclick="clearLog()">清空</button></div>
+    <div class="panel-body">
+      <div id="log" class="log"></div>
+      <div class="row">
+        <input id="cmdInput" class="grow" placeholder="输入指令，如 /announce 维护 /kick 玩家名 理由 /time noon">
+        <button class="btn primary" onclick="runCmd()">执行</button>
+      </div>
+    </div>
+  </section>
+
+  <footer>支持：服务器状态 · 在线玩家 · 广播 · 任意服务器指令 · 踢人/禁言/封禁(通过指令) · 保存/重载/重启/停服</footer>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
