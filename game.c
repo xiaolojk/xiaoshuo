@@ -1187,7 +1187,13 @@ static void draw_top(void){
 
 /* ---------- automated visual self-test (SELFTEST builds only) ---------- */
 #ifdef SELFTEST
+#ifdef _WIN32
+#include <direct.h>
+static int st_mkdir(const char*p){ return _mkdir(p); }
+#else
 #include <sys/stat.h>
+static int st_mkdir(const char*p){ return mkdir(p,0755); }
+#endif
 static void st_render(SDL_Renderer*ren,SDL_Texture*tex){
   SDL_LockSurface(screen);
   scr=(Uint32*)screen->pixels;scrpitch=screen->pitch/4;
@@ -1210,7 +1216,7 @@ static void st_wait(SDL_Renderer*ren,SDL_Texture*tex,float sec){
   while(SDL_GetTicks()-t0<(Uint32)(sec*1000.0f)){ st_render(ren,tex); SDL_Delay(16); }
 }
 static void selftest(SDL_Window*win,SDL_Renderer*ren,SDL_Texture*tex){
-  mkdir("shots",0755);
+  st_mkdir("shots");
   printf("physical canvas: %dx%d\n",PH_W,PH_H);
   /* 1) title EN + CN */
   state=ST_TITLE; lang=0; st_wait(ren,tex,0.4f); st_shot("01_title_en");
