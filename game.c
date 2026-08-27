@@ -5,6 +5,7 @@
    character animation + fishing motions + EN/CN bilingual
    + 32x32 CJK font
    ============================================================ */
+#define SDL_MAIN_HANDLED  /* we provide our own entry point on Windows */
 #include <SDL2/SDL.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -63,13 +64,6 @@ static void fill_grad(int x,int y,int w,int h,Uint32 c0,Uint32 c1){
   }
 }
 static Uint32 packrgb(int r,int g,int b){ return 0xFF000000u|((Uint32)r<<16)|((Uint32)g<<8)|(Uint32)b; }
-static void blit_spr(int dx,int dy,int scale,const Uint32*packed,const Uint8*d,int w,int h){
-  for(int sy=0;sy<h;sy++)for(int sx=0;sx<w;sx++){
-    Uint8 idx=d[sy*w+sx]; if(idx==255) continue;
-    Uint32 c=packed[idx];
-    for(int a=0;a<scale;a++)for(int b=0;b<scale;b++) setpix(dx+sx*scale+b,dy+sy*scale+a,c);
-  }
-}
 static void blit_rgba(int dx,int dy,int scale,const Uint32*px,int w,int h){
   for(int sy=0;sy<h;sy++)for(int sx=0;sx<w;sx++){
     Uint32 c=px[sy*w+sx]; if(!c) continue;
@@ -161,9 +155,9 @@ static int lang=0;
 static const char* T(const char*en,const char*cn){ return lang?cn:en; }
 
 /* ---------- RNG ---------- */
-static unsigned long rngstate;
-static void seed_rng(unsigned s){ rngstate=(unsigned long)s*2654435761u+0x9E3779B9UL; }
-static unsigned rnd(void){ rngstate=rngstate*6364136223846793005UL+1; return (unsigned)(rngstate>>32); }
+static unsigned long long rngstate;
+static void seed_rng(unsigned s){ rngstate=(unsigned long long)s*2654435761ULL+0x9E3779B9ULL; }
+static unsigned rnd(void){ rngstate=rngstate*6364136223846793005ULL+1; return (unsigned)(rngstate>>32); }
 static int rndi(int n){ return n<=0?0:(int)(rnd()%n); }
 static float rndf(void){ return (float)((double)(rnd()%1000000)/1000000.0); }
 
@@ -253,10 +247,6 @@ static void darkall(int a){
     r=r*(255-a)/255; g=g*(255-a)/255; b=b*(255-a)/255;
     scr[i]=0xFF000000u|((Uint32)r<<16)|((Uint32)g<<8)|(Uint32)b; }
 }
-
-/* ---------- sprite palette (kept for any index-blits) ---------- */
-typedef struct{int w,h,npal;const int*enums;const Uint8*data;Uint32 pack[16];}SPRITE;
-static void prep_sprite(SPRITE*s){ for(int i=0;i<s->npal;i++) s->pack[i]=PACKED[s->enums[i]]; }
 
 /* ---------- game state ---------- */
 enum{ST_TITLE,ST_INTRO,ST_PLAY,ST_REEL,ST_SHOP,ST_BAG,ST_QUIT};
@@ -386,7 +376,7 @@ static void draw_reel(void){
   center_text(126,T("3 MISSES = LINE SNAPS","3次失误 = 断线"),PACKED[C_SILVER],1);
   center_text(140,T("REEL!","收竿!"),PACKED[C_GOLD],2);
   if(plannedFish>=0){ render_fish(plannedFish,0); blit_rgba((IN_W-64)/2,30,1,fsp,64,64);
-    char s[40]; snprintf(s,40,"%s",FISHES[plannedFish].name); center_text(166,T(s, FISHES[plannedFish].cn),PACKED[C_CYAN],2); }
+    center_text(166,T(FISHES[plannedFish].en,FISHES[plannedFish].cn),PACKED[C_CYAN],2); }
   char b[40]; snprintf(b,40,T("HOOKS %d/%d","收竿数 %d/%d"),reelGood,reelNeed);
   center_text(196,b,PACKED[C_CYAN],1);
 }
@@ -462,10 +452,6 @@ static void draw_dock(void){
   for(int x=-30;x<IN_W;x+=64)fill(x+34,183,4,IN_H-183,d2);
   for(int x=8;x<IN_W;x+=24)fill(x,164,2,4,d2);
 }
-static void draw_bobber(void){
-  fill((int)bobX-3,(int)bobY,7,3,PACKED[C_FLOATA]);
-  fill((int)bobX-2,(int)bobY+1,5,1,PACKED[C_FLOATB]);
-}
 static void draw_fish_shape(int x,int y,int len,Uint32 color){
   int h=(len/3)+3;
   fill(x,y-len/2,len,h,color);
@@ -474,8 +460,7 @@ static void draw_fish_shape(int x,int y,int len,Uint32 color){
 }
 /* draw player + rod + line + bobber */
 static void draw_player(void){
-  int px=playerX-16, py=168-48; /* art origin at scale 2, feet near y=24 -> 168 */
-  /* anchor: art feet row = 21; we want feet ~168, sc=2 => oy=168-21*2=126, but draw below */
+  int px=playerX-16;
   int sc=2;
   int ox=px, oy=124;
   int hx,hy;
@@ -490,14 +475,15 @@ static void draw_player(void){
     /* bob arc during cast */
     int drawB=(phase==PH_CAST);
     int bx,by;
-    if(drawB){ float p=1.0f-(castT/0.5f); bx=playerX+(int)((bobX-playerX)*p); by=168+(int)(sinf(p*3.14159f)*-90.0f)*(p); by=(int)bobY+(int)(sinf(3.14159f*p)* -70.0f); }
+    float cp=0.0f;
+    if(drawB){ cp=1.0f-(castT/0.5f); if(cp<0)cp=0; if(cp>1)cp=1; bx=playerX+(int)((bobX-playerX)*cp); by=(int)bobY+(int)(sinf(3.14159f*cp)*-70.0f); }
     else { bx=(int)bobX; by=(int)bobY; }
     if(state==ST_REEL){ ang=-0.6f; len=34; }
-    else { ang=(phase==PH_CAST)?(1.2f-1.8f*p):(-1.1f); /* wait:nibble: -1.05..-1.25 */ 
-           if(phase==PH_NIBBLE) ang=-1.05f-0.2f*sinf(phaseT*30); len=36; }
+    else { ang=(phase==PH_CAST)?(1.2f-1.8f*cp):(-1.1f); /* wait:nibble: -1.05..-1.25 */
+           if(phase==PH_NIBBLE){ ang=-1.05f-0.2f*sinf(phaseT*30); }
+           len=36; }
     int tipx=gx+(int)(cosf(ang)*len*sc), tipy=gy+(int)(sinf(ang)*len*sc);
     Pline(ox,oy,sc,gx/sc,gy/sc,tipx/sc,tipy/sc,PACKED[C_ROD]);
-    int tx=ox+(tipx==0?0:tipx);
     /* line from tip to bob */
     int ly0=(int)tipy, lx0=(int)tipx;
     for(int y=ly0;y<by;y++) setpix(lx0,y,PACKED[C_LINE]);
@@ -524,24 +510,24 @@ static void draw_play(void){
   snprintf(b,64,"%02d:%02d %s",(int)timeH,(int)((timeH-(int)timeH)*60),is_night()?T("NIGHT","夜晚"):T("DAY","白天"));
   draw_text(IN_W-text_w(b,1)-8,6,b,is_night()?PACKED[C_YELLOW]:PACKED[C_WHITE],1);
   snprintf(b,64,T("SPOT:%s","位置:%s"),spot_name(spot)); draw_text(IN_W-text_w(b,1)-8,20,b,PACKED[C_SILVER],1);
-  snprintf(b,64,T("B:%s","%s"),T("SHOP","商店")); draw_text(IN_W-8-text_w(b,1)-6,34,T("B:商店",b),PACKED[C_SILVER],1);
+  { const char*bs=T("B:SHOP","B:商店"); draw_text(IN_W-text_w(bs,1)-8,34,bs,PACKED[C_SILVER],1); }
   if(phase==PH_IDLE){
     if(is_night()&&!(lantern&&boat)) center_text(224,T("NIGHT - BUY LANTERN","夜晚 - 请购买灯笼"),PACKED[C_WARN],1);
     else center_text(224,T("SPACE TO CAST","按空格抛竿"),PACKED[C_WHITE],1);
   }
   if(phase==PH_NIBBLE) center_text(224,T("!!! BITE !!!","!!! 鱼咬钩了 !!!"),PACKED[C_WARN],1);
-  if(phase==PH_CATCHMSG){ if(plannedFish>=0){ char s[48]; snprintf(s,48,T("CAUGHT %s!","捕获 %s!"),FISHES[plannedFish].name); center_text(164,s,PACKED[C_GOLD],2); } }
+  if(phase==PH_CATCHMSG){ if(plannedFish>=0){ char s[48]; snprintf(s,48,T("CAUGHT %s!","捕获 %s!"),lang?FISHES[plannedFish].cn:FISHES[plannedFish].en); center_text(164,s,PACKED[C_GOLD],2); } }
 }
 
 /* ---------- shop ---------- */
 typedef struct{const char*name;int cost;int maxown;int*var;const char*cname;}MENUITEM;
 static MENUITEM SHOPITEMS[6]={
-  {T("SELL ALL","全部出售"),0,0,0,"全部出售"},
-  {T("ROD","鱼竿"),30,3,0,"鱼竿"},
-  {T("LURE","鱼饵"),40,3,0,"鱼饵"},
-  {T("NET","渔网"),50,3,0,"渔网"},
-  {T("BOAT","小船"),150,1,0,"小船"},
-  {T("LANTERN","灯笼"),45,1,0,"灯笼"},
+  {"SELL ALL",0,0,0,"全部出售"},
+  {"ROD",30,3,0,"鱼竿"},
+  {"LURE",40,3,0,"鱼饵"},
+  {"NET",50,3,0,"渔网"},
+  {"BOAT",150,1,0,"小船"},
+  {"LANTERN",45,1,0,"灯笼"},
 };
 #define NSHOP 6
 static void shop_links(void){
@@ -566,7 +552,7 @@ static void draw_shop(void){
     int y=50+i*22; int maxed=(m->var&&*m->var>=m->maxown); int sel=(i==menuSel);
     Uint32 col=maxed?PACKED[C_GREY]:(sel?PACKED[C_GOLD]:PACKED[C_WHITE]);
     draw_text(34,y,lang?m->cname:m->name,col,1);
-    if(m->var){char b[24];if(maxed)snprintf(b,24,T("MAX","已满"));else snprintf(b,24,"$%d",m->cost);draw_text(150,y,b,col,1);}
+    if(m->var){char b[24];if(maxed)snprintf(b,24,"%s",T("MAX","已满"));else snprintf(b,24,"$%d",m->cost);draw_text(150,y,b,col,1);}
     if(sel)draw_text(22,y+1,">",PACKED[C_GOLD],1);
   }
   center_text(198,T("UP/DOWN SELECT  SPACE BUY  ESC BACK","上/下选择  空格购买  退出返回"),PACKED[C_SILVER],1);
@@ -618,13 +604,14 @@ static const char* IN_CN[5]={
 #define SLIDE_T 4.0f
 static int scene_for_slide(int s){ return s<2?0:(s==2?2:(s==3?3:1)); }
 static void draw_rain(float t){
+  Uint32 rain2=mulc(PACKED[C_CYAN],110);
   for(int i=0;i<40;i++){ int x=(i*47+(int)(t*90))%IN_W; int y=(i*29+(int)(t*300))%170;
-    setpix(x,y,PACKED[C_CYAN]); setpix(x+1,y+1,PACKED[C_SECOND_RAIN]); }
+    setpix(x,y,PACKED[C_CYAN]); setpix(x+1,y+1,rain2); }
 }
-static void draw_lightning(void){
-  int x=120,y=20;
-  while(y<150){ setpix(x,y,PACKED[C_WHITE]); setpix(x-2,y,PACKED[C_WHITE]);setpix(x+2,y,PACKED[C_WHITE]);
-    y+=8; x+=rndi(7)-3; }
+static void draw_lightning_rnd(float t){
+  int flash=((int)(t*1.7f))%6;
+  if(flash==3||flash==5){ int x=120+(rnd()%40); setpix(x,70,PACKED[C_WHITE]); int y=70; int px=x;
+    while(y<178){ if(rndi(2))setpix(px,y,PACKED[C_WHITE]); px+=rndi(5)-2; y+=6; for(int k=-1;k<=1;k++)setpix(px+k,y,PACKED[C_WHITE]);} }
 }
 static void update_intro(float dt){
   introT+=dt;
@@ -663,12 +650,6 @@ static void draw_intro(void){
   else{ center_text(236,T(IN_EN[s],IN_CN[s]),PACKED[C_GOLD],2);
         center_text(254,T("PRESS SPACE","按空格继续"),PACKED[C_SILVER],1); }
 }
-static void draw_lightning_rnd(float t){
-  int flash=((int)(t*1.7f))%6;
-  if(flash==3||flash==5){ int x=120+(rnd()%40); setpix(x,70,PACKED[C_WHITE]); int y=70; int px=x;
-    while(y<178){ if(rndi(2))setpix(px,y,PACKED[C_WHITE]); px+=rndi(5)-2; y+=6; for(int k=-1;k<=1;k++)setpix(px+k,y,PACKED[C_WHITE]);} }
-}
-
 /* ---------- title with language select ---------- */
 static void update_title(void){
   if(press.up)lang=0;
@@ -698,7 +679,7 @@ static void draw_title(void){
 
 /* ---------- dispatchers ---------- */
 static void update_top(float dt){
-  if(toastT>0)toastT-=dt; if(toastT<0)toastT=0;
+  if(toastT>0){ toastT-=dt; if(toastT<0)toastT=0; }
   if(state==ST_PLAY){
     if(press.e){state=ST_BAG;menuSel=0;}
     if(press.b){state=ST_SHOP;menuSel=0;}
@@ -726,6 +707,77 @@ static void draw_top(void){
   if(toastT>0){fill(0,264,IN_W,22,PACKED[C_BLACK]);center_text(272,toast,PACKED[C_YELLOW],1);}
 }
 
+/* ---------- automated visual self-test (SELFTEST builds only) ---------- */
+#ifdef SELFTEST
+#include <sys/stat.h>
+static void st_render(SDL_Renderer*ren,SDL_Texture*tex){
+  SDL_LockSurface(screen);
+  scr=(Uint32*)screen->pixels;scrpitch=screen->pitch/4;
+  memset(scr,0,(size_t)(scrpitch*IN_H)*sizeof(Uint32));
+  draw_top();
+  SDL_UnlockSurface(screen);
+  SDL_UpdateTexture(tex,NULL,screen->pixels,screen->pitch);
+  SDL_SetRenderDrawColor(ren,0,0,0,255);
+  SDL_RenderClear(ren);
+  SDL_RenderCopy(ren,tex,NULL,NULL);
+  SDL_RenderPresent(ren);
+}
+static void st_shot(const char*name){
+  char p[160]; snprintf(p,160,"shots/%s.bmp",name);
+  if(SDL_SaveBMP(screen,p)!=0) printf("SAVE FAIL %s: %s\n",p,SDL_GetError());
+  else printf("shot %s\n",p);
+}
+static void st_wait(SDL_Renderer*ren,SDL_Texture*tex,float sec){
+  Uint32 t0=SDL_GetTicks();
+  while(SDL_GetTicks()-t0<(Uint32)(sec*1000.0f)){ st_render(ren,tex); SDL_Delay(16); }
+}
+static void selftest(SDL_Window*win,SDL_Renderer*ren,SDL_Texture*tex){
+  mkdir("shots",0755);
+  /* 1) title EN + CN */
+  state=ST_TITLE; lang=0; st_wait(ren,tex,0.4f); st_shot("01_title_en");
+  lang=1; st_wait(ren,tex,0.4f); st_shot("02_title_cn");
+  /* 2) intro slides (CG + storm fx) */
+  state=ST_INTRO; lang=0;
+  for(int s=0;s<5;s++){ slide=s; introT=s*4.0f+2.0f; st_wait(ren,tex,0.3f);
+    char nm[32]; snprintf(nm,32,"intro_%d",s); st_shot(nm); }
+  lang=1; slide=0; introT=2.0f; st_wait(ren,tex,0.3f); st_shot("03_intro0_cn");
+  /* 3) play day / idle */
+  state=ST_PLAY; phase=PH_IDLE; pAnim=PA_IDLE; pAnimT=0.5f;
+  timeH=14.0f; playerX=120; st_wait(ren,tex,0.3f); st_shot("04_play_day");
+  /* 4) play night */
+  timeH=21.0f; st_wait(ren,tex,0.3f); st_shot("05_play_night");
+  /* 5) casting arc (mid-cast) */
+  phase=PH_CAST; pAnim=PA_CAST; castT=0.25f; bobX=340; bobY=190;
+  st_wait(ren,tex,0.1f); st_shot("06_casting");
+  /* 6) waiting + fish shadow */
+  phase=PH_WAIT; pAnim=PA_WAIT; phaseT=1.2f; bobX=330; bobY=185;
+  st_wait(ren,tex,0.3f); st_shot("07_waiting");
+  /* 7) nibble */
+  phase=PH_NIBBLE; phaseT=0.3f; st_wait(ren,tex,0.15f); st_shot("08_nibble");
+  /* 8) catch message w/ 64x64 fish */
+  phase=PH_CATCHMSG; plannedFish=7; phaseT=0.5f;
+  st_wait(ren,tex,0.3f); st_shot("09_catch");
+  lang=1; st_wait(ren,tex,0.2f); st_shot("10_catch_cn");
+  /* 9) reel minigame */
+  state=ST_REEL; pAnim=PA_REEL; plannedFish=8;
+  reelInd=200; reelTarget=150; reelZoneW=60; reelGood=2; reelNeed=5; reelBad=1;
+  st_wait(ren,tex,0.3f); st_shot("11_reel");
+  /* 10) walk anim */
+  state=ST_PLAY; phase=PH_IDLE; pAnim=PA_WALK; pAnimT=0.42f;
+  st_wait(ren,tex,0.1f); st_shot("12_walk");
+  /* 11) shop EN/CN */
+  state=ST_SHOP; menuSel=1; lang=0; st_wait(ren,tex,0.3f); st_shot("13_shop_en");
+  lang=1; st_wait(ren,tex,0.3f); st_shot("14_shop_cn");
+  /* 12) bag with all 10 fish (64x64 art grid) */
+  state=ST_BAG; bagFill=10;
+  for(int i=0;i<10;i++){bag[i]=i;caughtCount[i]=1;}
+  lang=0; st_wait(ren,tex,0.3f); st_shot("15_bag_en");
+  lang=1; st_wait(ren,tex,0.3f); st_shot("16_bag_cn");
+  printf("SELFTEST DONE\n");
+  (void)win;
+}
+#endif
+
 int main(int argc,char*argv[]){
   (void)argc;(void)argv;
   if(SDL_Init(SDL_INIT_VIDEO)<0)return 1;
@@ -743,6 +795,12 @@ int main(int argc,char*argv[]){
   seed_rng((unsigned)SDL_GetTicks()^((unsigned)time(NULL)<<8));
   shop_links();
   state=ST_TITLE;menuSel=0;slide=-1;introT=0;lang=0;
+#ifdef SELFTEST
+  selftest(win,ren,tex);
+  SDL_DestroyTexture(tex);SDL_FreeSurface(screen);
+  SDL_DestroyRenderer(ren);SDL_DestroyWindow(win);SDL_Quit();
+  return 0;
+#endif
 
   int running=1;Uint32 tprev=SDL_GetTicks();
   while(running){
@@ -793,3 +851,13 @@ int main(int argc,char*argv[]){
   SDL_FreeSurface(screen);SDL_DestroyRenderer(ren);SDL_DestroyWindow(win);SDL_Quit();
   return 0;
 }
+
+/* Windows GUI-subsystem entry wrapper (SDL_MAIN_HANDLED: main stays main) */
+#ifdef _WIN32
+#include <windows.h>
+int WINAPI WinMain(HINSTANCE hI,HINSTANCE hP,LPSTR cmd,int nShow){
+  (void)hI;(void)hP;(void)cmd;(void)nShow;
+  SDL_SetMainReady();
+  return main(__argc,(char**)__argv);
+}
+#endif
