@@ -40,13 +40,15 @@
 
 #define IN_W 512     /* logic grid (all layout code) */
 #define IN_H 288
-#define PH_W 1920    /* true physical canvas - native 1080p */
-#define PH_H 1080
+#define PH_W 1536    /* true physical canvas - INTEGER 3x pixel scale */
+#define PH_H 864
 #define FPS 60
 #define FRAME_MS (1000/FPS)
-/* logic->phys exact grid map: 1920/512 = 1080/288 = 15/4.
-   A logic pixel (x,y) covers phys [x*15/4,(x+1)*15/4) - seamless, no drift. */
-#define M2P(v) (((v)*15)>>2)
+/* logic->phys exact grid map: 1536/512 = 864/288 = 3.
+   Every logic pixel is a perfectly square 3x3 physical block - crisp uniform
+   Minecraft pixels (the old 3.75x map produced uneven 3px/4px cells that made
+   the whole scene look fuzzy and "slapped-on"). */
+#define M2P(v) (((v)*3))
 
 /* ---------- work palette ---------- */
 typedef struct { int r,g,b; } RGB3;
@@ -71,7 +73,9 @@ enum{
   C_SHIRT=30,C_PANTS=31,C_BOOT=32,C_ROD=33,C_PURPLE=34,C_CYAN=35,
   C_SILVER=36,C_NIGHT=37,C_WARN=38,C_OK=39
 };
-static int WIND_W=1920,WIND_H=1080;
+static int WIND_W=1536,WIND_H=864;
+/* scene-wide multiplicative lift for voxel texels (night keeps MC pixels alive) */
+static int g_nightlift=0;
 
 static SDL_Surface*screen; static Uint32*scr; static int scrpitch;
 
@@ -244,6 +248,204 @@ static Uint32 fish_mode_col(Uint32 c,int mode){
   if(mode==1) return dimc(c);
   if(mode==2) return mulc(mix3(c,packrgb(60,120,170),0.25f),205); /* visible through water */
   return c;
+}
+/* ============ voxel-pixel tools: Minecraft-style per-pixel texture ============ */
+static Uint32 shade_c(Uint32 c,int dv){ /* brightness shift, clamped */
+  int r=(int)(c>>16&0xFF)+dv,g=(int)(c>>8&0xFF)+dv,b=(int)(c&0xFF)+dv;
+  if(r<0)r=0;if(r>255)r=255;if(g<0)g=0;if(g>255)g=255;if(b<0)b=0;if(b>255)b=255;
+  return packrgb(r,g,b);
+}
+static unsigned hash2(int x,int y){ /* stable per-pixel hash -> deterministic texture */
+  unsigned h=(unsigned)(x*374761393u+y*668265263u);
+  h=(h^(h>>13))*1274126177u; return h^(h>>16);
+}
+static int mc_texel(int h,int spread){ /* MC 16x16 style: 5 WELL-SEPARATED tones */
+  int r=(int)(h%100);
+  if(r<12) return -spread;           /* 12% deep dark   */
+  if(r<30) return -spread*2/3;       /* 18% dark        */
+  if(r<62) return -spread/5;         /* 32% near-base   */
+  if(r<86) return spread*2/3;        /* 24% light       */
+  return spread;                     /* 14% bright      */
+}
+/* MC texel as a PERCENT tone: biassed toward the base colour, rare strong
+   speckles. Used MULTIPLICATIVELY so the texture stays visible on dark blocks
+   (boots, trunks, deep water) where additive brightness is invisible. */
+static int mc_texel_pct(int h){
+  int r=(int)(h%100);
+  if(r<10) return -40;   /* deep dark texel   */
+  if(r<26) return -18;   /* dark texel        */
+  if(r<52) return -5;    /* near-base low     */
+  if(r<78) return  5;    /* near-base high    */
+  if(r<92) return 18;    /* light texel       */
+  return 40;             /* bright texel      */
+}
+/* apply a texel percent to a colour multiplicatively (visible on dark + light) */
+static Uint32 texel_c(Uint32 c,int pct){
+  int f=100+pct+g_nightlift; if(f<52)f=52; if(f>162)f=162;
+  return mulc(c,f);
+}
+/* ---- Minecraft texel texture --------------------------------------------------
+   Every texel of a face is INDIVIDUALLY visible and differs from its neighbours,
+   but it is sampled on a coarse 2x2 lattice so nearby texels CLUSTER into blobs,
+   exactly like MC grass/dirt/plank 16x16 textures (not flat, not static noise). */
+static void vox_tex(int x,int y,int w,int h,Uint32 c,int spread,int seed){
+  for(int yy=y;yy<y+h;yy++)for(int xx=x;xx<x+w;xx++){
+    unsigned hn=hash2((xx>>1)*13+seed*7,(yy>>1)*17+seed*3);
+    int d=mc_texel_pct((int)hn);
+    unsigned hk=hash2(xx*11+seed*2,yy*7+seed*13);
+    if((hk&15)==0) d=(hk&64)?-55:55;              /* rare strong light/dark */
+    setpix(xx,yy,texel_c(c,d));
+  }
+}
+/* ---- one Minecraft cube -------------------------------------------------------
+   Every face is a grid of INDIVIDUALLY visible texels: each texel CLUSTERS on a
+   2x2 lattice AND is forced to differ from the pixel to its left, so the face
+   reads as a coherent MC texture where NO two adjacent pixels share a colour.
+   Each cube has THREE shading zones - sunlit TOP band / textured BODY / shaded
+   BOTTOM band - plus a left AO edge, a right sunlit edge and a full dark
+   under-seam, so stacked cubes read as SEPARATE 3D blocks with real depth.
+   Fixed light: upper-right. */
+static void vox_cube(int x,int y,int w,int h,Uint32 c,int light,int spread,int seed){
+  if(w<=0||h<=0)return;
+  int th=h/3; if(th<1)th=1;
+  int bh=h/3; if(bh<1)bh=1;
+  if(th+bh>=h){ th=1; bh=1; }
+  int mid=h-th-bh;
+  int L=light*3/2;                    /* amplified band contrast: faces clearly read */
+  for(int yy=y;yy<y+h;yy++){
+    int band;
+    if(yy-y<th)                 band= L;      /* sunlit TOP face   */
+    else if(y+h-1-yy<bh)        band=-L;      /* shaded BOTTOM face*/
+    else if(yy-y<th+mid/2)      band= L/2;    /* upper body half-lit*/
+    else                        band= 0;      /* lower body base   */
+    int prevd=1000;                          /* guarantee left-neighbour differs */
+    for(int xx=x;xx<x+w;xx++){
+      unsigned hc=hash2(((xx>>1)*13+seed*7),((yy>>1)*17+seed*3));
+      int d=mc_texel_pct((int)hc);            /* clustered 2x2 blob, percent */
+      /* per-texel wake: every pixel toggles between two well-separated tones so
+         the final 8-bit colours really differ (tiny ±1 steps collapse once the
+         colour is quantized; a ≥6% swing survives on every channel) */
+      int wake=((xx^yy)&1)?6:-6;
+      if((int)hash2(xx*11+seed*3,yy*7+seed*5)%5==0) wake=(hash2(xx*3,yy*13)&1)?-16:16;
+      d+=wake;
+      if(d>55)d=55; if(d<-55)d=-55;
+      unsigned hk=hash2(xx*17+seed*2,yy*13+seed*3);
+      if((hk&31)==0) d=(hk&128)?-55:55;       /* rare strong speck */
+      if(xx>x && d==prevd) d=(d>=0)?d+2:d-2;  /* never equal to the pixel at left */
+      prevd=d;
+      Uint32 base=texel_c(c,d);               /* multiplicative: dark blocks still textured */
+      int e=0;
+      if(xx==x)           e=-L/2;             /* left AO edge  */
+      else if(xx==x+w-1)  e=L/3;              /* right sunlit   */
+      setpix(xx,yy,shade_c(shade_c(base,band),e));
+    }
+  }
+  /* full-width dark under-seam -> stacked cubes read as SEPARATE blocks */
+  for(int xx=x;xx<x+w;xx++)
+    setpix(xx,y+h-1,texel_c(mulc(c,34),mc_texel_pct((int)hash2(xx,seed*9+3))));
+  /* bright top rim -> every cube catches the sun; keeps texel texture so the
+     rim is bright BUT never a long flat run of identical pixels */
+  for(int xx=x;xx<x+w;xx++) if((hash2(xx,seed*11+1)&3)!=0){
+    Uint32 base=texel_c(c,mc_texel_pct((int)hash2(xx*5+seed,seed*17+3)));
+    setpix(xx,y,shade_c(base,L+8));
+  }
+}
+/* ---- grass-topped terrain strip (side view of MC grass blocks) ----------------
+   Dirt is drawn as a stack of 6px dirt CUBES (each with lit top / textured body /
+   shaded bottom + seam), capped by a jagged bright green sod band with sunlit
+   blade tips - reads as stacked MC grass blocks with real depth. */
+static void vox_ground(int x,int y,int w,int h,Uint32 dirt,Uint32 grass,int light,int seed){
+  int bh=6;
+  for(int yy=y;yy<y+h;yy+=bh){
+    int hh=h-(yy-y); if(hh>bh)hh=bh;
+    vox_cube(x,yy,w,hh,dirt,light,14,seed*31+yy);
+  }
+  /* green sod band: bright, textured, jagged blocky top + sunlit tips.
+     Every sod texel gets a MULTIPLICATIVE MC tone + per-pixel dither and is
+     forced to differ from its left neighbour -> fine visible pixels, never
+     a long flat green run. */
+  for(int xx=x;xx<x+w;xx++){
+    int j=hash2(xx>>1,seed*13)%3;              /* jagged block tops 0..2 */
+    int prevd=1000;
+    for(int yy=y-j;yy<=y;yy++){
+      int dd=(yy-(y-j))*3;
+      int d=mc_texel_pct((int)hash2(xx*7+seed,yy*13+seed*5));
+      d+=(int)(hash2(xx*3+seed,yy*5+seed)%3)-1;
+      if(yy>y-j && d==prevd) d=(d>=0)?d+1:d-1;
+      prevd=d;
+      int lv=(dd)?(-dd):light;                  /* bright sod top fading to dirt */
+      if(yy==y-j) lv=light+5;                   /* sunlit grass tips */
+      setpix(xx,yy,shade_c(texel_c(grass,d),lv));
+    }
+    if(hash2(xx,seed)%3) setpix(xx,y-j-1,shade_c(grass,light+6)); /* raised blade */
+  }
+  /* dark seam where the sod meets the dirt */
+  for(int xx=x;xx<x+w;xx++) if(hash2(xx,seed*9+1)%2==0) setpix(xx,y+1,mulc(dirt,72));
+}
+/* fully replace a rect with per-pixel dithered colour: every logic pixel gets
+   its own tiny brightness offset, so no two pixels look identical (MC grass) */
+static void noise_fill(int x,int y,int w,int h,Uint32 c,int amp,int seed){
+  for(int yy=y;yy<y+h;yy++)for(int xx=x;xx<x+w;xx++){
+    int v=(int)((hash2(xx*7+seed*131,yy*13+seed*7))%(2*amp+1))-amp;
+    setpix(xx,yy,shade_c(c,v));
+  }
+}
+/* sparse dither over already-drawn pixels: flips ~1/denom pixels by dv,
+   keeps the base gradient underneath (MC water ripple / sun sparkle) */
+static void dither_rect(int x,int y,int w,int h,int denom,int dv,int seed){
+  for(int yy=y;yy<y+h;yy++)for(int xx=x;xx<x+w;xx++)
+    if(hash2(xx*3+seed,yy*5+seed)%denom==0){
+      Uint32 c=scr[(M2P(yy))*scrpitch+(M2P(xx))];
+      setpix(xx,yy,shade_c(c,dv));
+    }
+}
+/* Minecraft cube face shading on a flat cell:
+   top strip (bright) + middle (base) + bottom (dark) - fake 3D volume */
+static void vox_face(int x,int y,int w,int h,Uint32 c,int light){
+  int th=(h*3+2)/5; if(th<1)th=1;
+  int bh=h-th*2; if(bh<1)bh=1;
+  noise_fill(x,y,w,th,shade_c(c,light),2,x*3);
+  noise_fill(x,y+th,w,bh,c,2,x*3+1);
+  noise_fill(x,y+th+bh,w,h-th-bh,shade_c(c,-light),2,x*3+2);
+}
+/* full Minecraft cube: alias of vox_cube (lit top / textured body / shaded
+   bottom + seam + AO). amp = per-texel dither. */
+static void vox_block(int x,int y,int w,int h,Uint32 c,int light,int amp,int seed){
+  vox_cube(x,y,w,h,c,light,amp,seed);
+}
+/* wood plank cube: voxel board (lit top / body / shaded bottom + seams) plus
+   horizontal grain streaks and nail dots (MC plank block look) */
+static void vox_wood(int x,int y,int w,int h,Uint32 c,int light,int seed){
+  vox_cube(x,y,w,h,c,light,18,seed);
+  /* MC plank texture: horizontal grain - every 3rd row gets light + dark streaks.
+     Each grain pixel gets its own tiny jitter so even a wood streak is a run of
+     slightly-different pixels, never a flat line. */
+  for(int yy=y+1;yy<y+h-1;yy++) if(hash2(seed*7,yy)%3==0)
+    for(int xx=x+1;xx<x+w-1;xx++){
+      int j=(int)(hash2(xx*3,yy*5)%3)-1;                 /* ±1 dither         */
+      if(hash2(xx*3+seed,yy*5)%3==0) setpix(xx,yy,shade_c(shade_c(c,16),j*2));      /* light grain */
+      else if(hash2(xx*7+seed,yy*11)%5==0) setpix(xx,yy,mulc(c,66-j*2));          /* dark grain  */
+    }
+  /* dark knot dots */
+  for(int xx=x+3;xx<x+w-1;xx+=9) if(hash2(xx,seed)%3==0){
+    setpix(xx,y+h/2-1,mulc(c,55)); setpix(xx+1,y+h/2-1,mulc(c,55));
+    setpix(xx,y+h/2,  mulc(c,70)); setpix(xx+1,y+h/2,  mulc(c,70));
+  }
+  /* nail dots on the top edge */
+  for(int xx=x+6;xx<x+w-2;xx+=15) if(hash2(xx,seed)%4==0){ setpix(xx,y+1,mulc(c,50)); setpix(xx+1,y+1,mulc(c,45)); }
+}
+/* Minecraft grass block: dithered dirt body + bright green sod + hanging
+   grass blades + sunlit blade tips (MC grass block look) */
+static void vox_grass(int x,int y,int w,int h,Uint32 dirt,Uint32 grass,int light,int seed){
+  vox_ground(x,y,w,h,dirt,grass,light,seed);
+}
+/* per-pixel dither over an existing gradient (keeps the base colour under) */
+static void grad_noise(int x,int y,int w,int h,int amp,int seed){
+  for(int yy=y;yy<y+h;yy++)for(int xx=x;xx<x+w;xx++){
+    int v=((int)(hash2(xx*7+seed,yy*13+seed*3))%(2*amp+1))-amp;
+    Uint32 c=scr[(M2P(yy))*scrpitch+(M2P(xx))];
+    setpix(xx,yy,shade_c(c,v));
+  }
 }
 /* blit a 64x64 hard-pixel sprite from fish_sprites.h into fsp (optionally flipped) */
 static void render_fish_mode(int sp,int mode,int flip){
@@ -735,9 +937,38 @@ static void draw_bite_fish(void){
 }
 
 /* ---------- player figure (30-frame parametric) ---------- */
+/* block-scaled rect with Minecraft volume: per-pixel texel texture + top row
+   sunlit + bottom dark seam + left edge AO, so every body part reads as a
+   separate lit 3D cube (MC player look). */
 static void P(int ox,int oy,int sc,int x,int y,int w,int h,Uint32 c){
-  for(int yy=y;yy<y+h;yy++)for(int xx=x;xx<x+w;xx++)
-    for(int a=0;a<sc;a++)for(int b=0;b<sc;b++)setpix(ox+xx*sc+b,oy+yy*sc+a,c);
+  for(int by=y;by<y+h;by++){
+    int fr=by-y;
+    int dv=(h>=3)?((fr>=h*3/5)?-16:((fr>=h*2/5)?2:16)):3;
+    int top=(h>=2&&fr==0), bot=(h>=2&&fr==h-1);
+    for(int a=0;a<sc;a++){
+      int py0=oy+by*sc+a;
+      int prevd=1000;
+      for(int bx=x;bx<x+w;bx++){
+        for(int b=0;b<sc;b++){
+          int px0=ox+bx*sc+b;
+          /* multiplicative MC tone: stays visible on dark colours (boots/legs),
+             plus per-pixel dither and a guarantee it differs from the pixel
+             to its left -> every pixel of the sprite is its own tiny dot */
+          int d=mc_texel_pct((int)hash2(px0*7+(int)(c>>20),py0*13+((int)((c>>8)&15))));
+          d+=(int)(hash2(px0*3+1,py0*5+7)%3)-1;
+          if(prevd!=1000 && d==prevd) d=(d>=0)?d+1:d-1;
+          prevd=d;
+          Uint32 base=texel_c(c,d);
+          Uint32 col=shade_c(base,dv);
+          if(top) col=shade_c(col,16);        /* sunlit top face */
+          if(bot) col=mulc(col,45);           /* shaded bottom face */
+          if(bx==0) col=shade_c(col,-12);     /* left AO side */
+          else if(bx==w-1) col=shade_c(col,9);/* right sunlit side */
+          setpix(px0,py0,col);
+        }
+      }
+    }
+  }
 }
 static void Pline(int ox,int oy,int sc,int x0,int y0,int x1,int y1,Uint32 c){
   int dx=abs(x1-x0),sx=x0<x1?1:-1,dy=-abs(y1-y0),sy=y0<y1?1:-1,er=dx+dy;
@@ -978,30 +1209,88 @@ static const int STARS[24][2]={
  {390,34},{412,10},{438,26},{460,12},{482,30},{498,18},{26,36},{470,36}
 };
 static void cloud(int x,int y,int s,Uint32 c){
-  fill(x,y,7*s,3,c);
-  fill(x+s,y-1,3*s,2,c); fill(x+2*s,y-2,2*s,1,c);
-  fill(x+s+4*s,y-1,2*s,2,c);
-  fill(x+s,y+2,5*s,1,mulc(c,150));
+  /* cloud = a cluster of little voxel cubes (lit top / shaded underside), so it
+     reads as a blocky MC cloud instead of a flat rectangle */
+  static const int PX[7]={0,2,5,3,7,1,4}, PY[7]={0,-1,0,-2,0,1,1}, PW[7]={2,2,2,2,2,1,1};
+  for(int i=0;i<7;i++){
+    int cx=x+PX[i]*s, cy=y+PY[i]*s;
+    vox_cube(cx,cy,PW[i]*s,s,c,10,2,i*11+x);
+  }
+  dither_rect(x,y-3,9*s,5,6,6,x*3);   /* bright rim speckle */
 }
 static void hills(Uint32 c,int amp,int base,float seed){
   for(int x=0;x<IN_W;x++){
-    int h=base+(int)(sinf(x*0.013f+seed)*amp+sinf(x*0.037f+seed*2.0f)*amp*0.4f);
-    fill(x,150-h,1,h,c);
+    float fx=sinf(x*0.013f+seed)*amp+sinf(x*0.037f+seed*2.0f)*amp*0.4f;
+    int h=base+(int)fx;
+    int topY=(150-h)/4*4;              /* step the silhouette into 4px blocks */
+    for(int y=topY;y<150;y++){
+      int blk=(y-topY)/4;
+      int d=mc_texel_pct((int)hash2(x*7,y*13+3));  /* MC clustered texels, % */
+      d+=(int)(hash2(x*3+1,y*5+7)%3)-1;
+      int add=(blk==0)?16:0;                      /* lit top of each block */
+      if(((y-topY)%4)==3 && blk!=0) d-=40;        /* dark seam row (still textured) */
+      setpix(x,y,shade_c(texel_c(c,d),add));
+    }
+    if(topY<150) setpix(x,topY,shade_c(texel_c(c,mc_texel_pct((int)hash2(x*5,(int)(seed*97.0f)))),20));
   }
 }
 static void draw_tree(int x,int ground,int night){
   Uint32 trunk=PACKED[night?C_TRUNK:C_DOCK2], leaf=PACKED[night?C_BUSH:C_GRASS];
-  fill(x-2,ground-36,5,36,trunk);
-  fill(x+1,ground-32,2,28,mulc(trunk,160));
-  /* branch */
-  fill(x-6,ground-30,4,2,trunk); fill(x+4,ground-34,4,2,trunk);
-  /* 3 foliage clusters with highlights */
-  int cs[3][3]={{x-10,ground-46,13},{x+2,ground-55,16},{x+12,ground-44,11}};
-  for(int i=0;i<3;i++){
-    int cx=cs[i][0],cy=cs[i][1],r=cs[i][2];
-    fill(cx-r/2,cy-r/2,r,r,leaf);
-    fill(cx-r/2+2,cy-r/2-2,r-4,3,mulc(leaf,185));
-    fill(cx-r/2,cy+r/2-2,r,2,mulc(leaf,130));
+  Uint32 leafdark=mulc(leaf,night?125:145), leafhi=mix3(leaf,PACKED[C_WHITE],night?0.12f:0.30f);
+  /* trunk: stacked bark CUBES (lit top / shaded bottom / own texture + seams),
+     three columns with LEFT-shaded / base / RIGHT-sunlit sides, fixed light
+     from the upper-right, MC log look */
+  for(int yy=ground-32;yy<ground-1;yy+=5){
+    int hh=(ground-1)-yy; if(hh>5)hh=5;
+    vox_cube(x-2,yy,2,hh,shade_c(trunk,-12),10,10,x*3+yy/2);
+    vox_cube(x,  yy,2,hh,trunk,             10,10,x*3+yy/2+1);
+    vox_cube(x+2,yy,2,hh,shade_c(trunk,10), 11,10,x*3+yy/2+2);
+  }
+  /* bark grain: MC log vertical streaks (light + dark) over the middle column */
+  for(int yy=ground-31;yy<ground-1;yy++){
+    if(hash2(x*3,yy)%3==0) setpix(x,yy,mulc(trunk,150));        /* dark streak */
+    if(hash2(x*3+1,yy)%5==0) setpix(x+1,yy,shade_c(trunk,14));  /* light streak */
+  }
+  /* root flare cubes */
+  vox_cube(x-4,ground-3,4,2,shade_c(trunk,-8),10,8,x*7);
+  vox_cube(x+2,ground-3,4,2,shade_c(trunk,8), 10,8,x*7+1);
+  fill(x-3,ground-1,8,2,mulc(trunk,50));    /* root AO seam */
+  /* low branches: bark cubes */
+  vox_cube(x-6,ground-30,3,2,shade_c(trunk,-6),10,8,x*3+4);
+  vox_cube(x+4,ground-34,3,2,trunk,         10,8,x*3+5);
+  /* leaf crown: a DENSE ball of stacked 5px leaf cubes. One coherent volume:
+     light comes from the upper-right, so top rows + right columns are bright,
+     bottom rows + left columns dark; every cube keeps its own 3-zone shading
+     + seam so the crown reads as MANY separate leaf blocks (MC oak leaves) */
+  int maxcol=4,maxrow=3;
+  for(int row=-maxrow;row<=maxrow;row++){
+    int hw=(int)(maxcol*sqrtf(1.0f-(float)(row*row)/(float)(maxrow*maxrow)));
+    int yy=ground-46+row*5;
+    for(int col=-hw;col<=hw;col++){
+      int xx=x+col*5;
+      Uint32 cc=leaf;
+      int lv=-row*5+(col>0?4:(col<0?-4:0));  /* volume gradient */
+      cc=shade_c(cc,lv);
+      if(hash2(xx,yy)%7==0) cc=mulc(cc,150);           /* scattered dark leaf */
+      if(hash2(xx+3,yy+1)%11==0) cc=mix3(cc,PACKED[C_WHITE],0.25f); /* bright speck */
+      vox_cube(xx,yy,5,5,cc,18,16,xx);
+    }
+  }
+  /* canopy scatter: sunlit specks on top, stray dark leaves at the rim */
+  int toprow=-maxrow;
+  int hwt=(int)(maxcol*sqrtf(1.0f-(float)(toprow*toprow)/(float)(maxrow*maxrow)));
+  for(int xx=x-hwt*5;xx<=x+hwt*5;xx+=2)
+    if(hash2(xx,ground-46+toprow*5)%3) setpix(xx,ground-46+toprow*5-1,leafhi);
+  for(int row=-maxrow;row<=maxrow;row++){
+    int hw=(int)(maxcol*sqrtf(1.0f-(float)(row*row)/(float)(maxrow*maxrow)));
+    int yy=ground-46+row*5;
+    int x0c=x-hw*5, x1c=x+hw*5;
+    for(int k=0;k<4;k++){
+      int den=hw*10+1;
+      int lx=x0c+(hash2(k*7,row*13)%den);
+      setpix(lx,yy+(hash2(k,row)%2),leafdark);
+      setpix(x1c-(hash2(k*3,row)%2),yy+(hash2(k,row*2)%2),shade_c(leafdark,-6));
+    }
   }
 }
 static void draw_sky(void){
@@ -1014,6 +1303,8 @@ static void draw_sky(void){
     skytop=packrgb(72,52,112); skybot=packrgb(236,120,86);
   } else { skytop=packrgb(84,158,222); skybot=packrgb(168,224,238); }
   fill_grad(0,0,IN_W,150,skytop,skybot);
+  grad_noise(0,0,IN_W,150,3,11);   /* per-pixel sky dither, no flat bands */
+  dither_rect(0,0,IN_W,150,19,6,13); /* faint horizontal weave -> depth strata */
   Uint32 now=SDL_GetTicks();
   if(night){
     /* stars with twinkle */
@@ -1022,7 +1313,7 @@ static void draw_sky(void){
         setpix(STARS[i][0],STARS[i][1],(i%3)?PACKED[C_WHITE]:packrgb(200,210,255));
       if(i%7==0) setpix(STARS[i][0]+1,STARS[i][1]+1,packrgb(120,130,180));
     }
-    /* moon: disc + crescent bite */
+    /* moon: blocky voxel disc + crescent bite + craters */
     float nf=(timeH>=19)?(timeH-19.0f)/10.0f:((timeH+5.0f)/10.0f);
     int mx=(int)(50+nf*(IN_W-110)), my=44;
     fill(mx-5,my-5,11,11,packrgb(228,232,242));
@@ -1032,6 +1323,7 @@ static void draw_sky(void){
     fill(mx-3,my-3,6,6,mulc(skytop,190)); /* crescent bite */
     fill(mx+3,my-5,3,3,packrgb(190,196,210)); /* craters */
     fill(mx-2,my+2,2,2,packrgb(190,196,210));
+    grad_noise(mx-6,my-6,13,13,2,77);     /* per-pixel moon surface */
     sunX=mx; sunY=my;
   } else {
     /* sun arc: rises 6:00, sets 18:00 */
@@ -1040,13 +1332,13 @@ static void draw_sky(void){
     int sx=(int)(46+dayf*(IN_W-100));
     int sy=(int)(96-fabsf(dayf-0.5f)*2*78);
     Uint32 sc=(timeH<8||timeH>=17)?packrgb(250,150,80):packrgb(255,214,90);
-    /* glow rings */
+    /* blocky voxel sun: glow rings + lit cube core + rays */
     fill(sx-6,sy-6,13,13,mulc(sc,120));
     fill(sx-4,sy-4,9,9,mulc(sc,170));
-    fill(sx-3,sy-3,7,7,sc);
-    fill(sx-1,sy-1,3,3,mix3(sc,packrgb(255,255,240),0.6f));
-    /* rays */
+    vox_block(sx-3,sy-3,7,7,sc,18,2,5);
+    noise_fill(sx-1,sy-1,3,3,mix3(sc,packrgb(255,255,240),0.6f),2,9);
     setpix(sx,sy-8,sc);setpix(sx,sy+8,sc);setpix(sx-8,sy,sc);setpix(sx+8,sy,sc);
+    setpix(sx+1,sy-7,mulc(sc,190));setpix(sx-1,sy-7,mulc(sc,190));
     sunX=sx; sunY=sy;
     /* drifting clouds (3 parallax layers) */
     Uint32 cc=(timeH<8||timeH>=17)?packrgb(250,200,170):packrgb(250,252,255);
@@ -1068,8 +1360,18 @@ static void draw_sky(void){
   /* distant hills: two layered silhouettes */
   hills(mix3(skybot,packrgb(40,70,90),0.45f),15,22,1.7f);
   hills(mix3(skybot,packrgb(24,50,66),0.62f),11,13,4.9f);
-  /* haze band at horizon */
-  fill(0,142,IN_W,8,mulc(skybot,160));
+  /* haze band at horizon: textured depth strip, never a flat fill */
+  for(int y=142;y<150;y++){
+    Uint32 hc=mulc(skybot,(150-y)*16+92);
+    int prevd=1000;
+    for(int x=0;x<IN_W;x++){
+      int d=mc_texel_pct((int)hash2(x*5+y,y*7+3));
+      d+=(int)(hash2(x*3+1,y*5+7)%3)-1;
+      if(d==prevd) d=(d>=0)?d+1:d-1;
+      prevd=d;
+      setpix(x,y,texel_c(hc,d));
+    }
+  }
 }
 static void draw_water(void){
   int night=is_night();
@@ -1078,13 +1380,65 @@ static void draw_water(void){
   else if(timeH<8){ topc=packrgb(214,150,120); botc=packrgb(40,70,120); }
   else if(timeH>=17){ topc=packrgb(190,100,100); botc=packrgb(30,44,90); }
   else { topc=packrgb(84,176,220); botc=packrgb(20,84,150); }
-  fill_grad(0,150,IN_W,120,topc,botc);
+  fill_grad(0,150,IN_W,138,topc,botc);
   Uint32 now=SDL_GetTicks();
+  /* vertical depth table (surface light -> deep dark) */
+  Uint32 wcol[IN_H];
+  {
+    int tr=topc>>16&0xFF,tg=topc>>8&0xFF,tb=topc&0xFF;
+    int br=botc>>16&0xFF,bg=botc>>8&0xFF,bb=botc&0xFF;
+    for(int yy=150;yy<IN_H;yy++){
+      float t=(float)(yy-150)/(float)(IN_H-150);
+      wcol[yy]=packrgb((int)(tr+(br-tr)*t),(int)(tg+(bg-tg)*t),(int)(tb+(bb-tb)*t));
+    }
+  }
+  /* MC-style water: a grid of 4px water CUBES - each cube keeps its own
+     crest/trough tone (drifting), a sunlit TOP row, a shaded BOTTOM row and a
+     per-texel MC texture, so the lake reads as tiled animated water blocks
+     instead of a flat gradient sheet. The texture runs ALL the way down so the
+     deep water is never a flat fill. */
+  for(int cy=150;cy<IN_H;cy+=4){
+    float ph=((cy-150)/4)*0.55f+now*0.0011f;
+    int drift=(int)(sinf(ph)*8.0f);
+    int surf=(cy<182);                     /* only surface rows keep wave drift */
+    for(int cx=0;cx<IN_W;cx+=4){
+      int cre=((hash2(cx*7,cy*13+3)&1)?3:-3);   /* per-block crest/trough */
+      for(int yy=cy;yy<cy+4&&yy<IN_H;yy++){
+        int rowin=yy-cy;
+        int band;
+        if(surf) band=(rowin==0)?(15+drift):((rowin==3)?(-13+drift):cre);
+        else     band=(rowin==0)?8:((rowin==3)?-10:cre);
+        for(int xx=cx;xx<cx+4&&xx<IN_W;xx++){
+          /* multiplicative MC water tone + dither, differs from left texel */
+          int d=mc_texel_pct((int)hash2(xx*5+cy,yy*7+3));
+          d+=(int)(hash2(xx*3,yy*11+cy)&3)-1;
+          setpix(xx,yy,shade_c(texel_c(wcol[yy],d),band));
+        }
+      }
+      /* dark under-seam of every water-block row -> the block grid is visible */
+      if(cy+4<IN_H) for(int xx=cx;xx<cx+4&&xx<IN_W;xx++)
+        if((hash2(xx,cy)&1)==0) setpix(xx,cy+3,mulc(wcol[cy+3],70));
+    }
+  }
+  dither_rect(0,150,IN_W,138,7,20,37);   /* sunlit wave crest speckle */
+  dither_rect(0,150,IN_W,138,11,-16,39); /* deep water patches */
+  /* depth: darkest band only at the very bottom - textured, never a flat fill */
+  for(int yy=IN_H-24;yy<IN_H;yy++){
+    Uint32 bc=mulc(botc,140-(yy-(IN_H-24))*3);
+    int prevd=1000;
+    for(int xx=0;xx<IN_W;xx++){
+      int d=mc_texel_pct((int)hash2(xx*5+yy,yy*7+3));
+      d+=(int)(hash2(xx*3,yy*11)%3)-1;
+      if(d==prevd) d=(d>=0)?d+1:d-1;
+      prevd=d;
+      setpix(xx,yy,texel_c(bc,d));
+    }
+  }
   /* shimmer: horizontal light streaks drifting */
   Uint32 shim=night?packrgb(70,110,190):mix3(topc,packrgb(255,255,255),0.55f);
   for(int i=0;i<70;i++){
     int seedx=(i*97+((int)(now/140)))%IN_W;
-    int y=153+(i*37)%114;
+    int y=153+(i*37)%120;
     int w=3+(i%9);
     Uint32 c=mulc(shim,(i%3==0)?230:180);
     fill(seedx,y,w,1,c);
@@ -1102,11 +1456,11 @@ static void draw_water(void){
 static void draw_dock(void){
   int night=is_night();
   Uint32 d=PACKED[night?C_BROWN:C_DOCK],d2=PACKED[night?C_TRUNK:C_DOCK2];
-  /* left bank: grass, tree, reeds, flowers */
-  fill(0,150,54,22,PACKED[night?C_BUSH:C_GRASS]);
-  fill(0,150,54,2,mulc(PACKED[night?C_BUSH:C_GRASS],185));
+  Uint32 grass=PACKED[night?C_BUSH:C_GRASS], dirt=PACKED[night?C_TRUNK:C_DOCK2];
+  /* left bank: Minecraft grass-block terrain (jagged blocky sod + dirt cubes) */
+  vox_ground(0,150,54,20,dirt,grass,night?8:16,1);
   draw_tree(34,172,night);
-  /* reeds swaying */
+  /* reeds swaying (pixel stalks with tuft) */
   Uint32 now=SDL_GetTicks();
   for(int i=0;i<5;i++){
     int rx=8+i*9;
@@ -1115,16 +1469,41 @@ static void draw_dock(void){
     setpix(rx+sway,151,PACKED[night?C_BUSH:C_GRASS]);
     setpix(rx+sway+1,151,PACKED[night?C_BUSH:C_GRASS]);
   }
-  /* flowers */
-  setpix(6,147,PACKED[C_PINK]); setpix(7,146,PACKED[C_PINK]);
-  setpix(44,148,PACKED[C_WHITE]); setpix(20,145,PACKED[C_GOLD]);
+  /* flowers (distinct pixels + tiny ground shadow) */
+  setpix(6,147,PACKED[C_PINK]); setpix(7,146,PACKED[C_PINK]); setpix(5,148,mulc(PACKED[C_PINK],150));
+  setpix(44,148,PACKED[C_WHITE]); setpix(20,145,PACKED[C_GOLD]); setpix(43,149,mulc(PACKED[C_GOLD],150));
   if(!night){ setpix(48,150,PACKED[C_WHITE]); setpix(12,149,PACKED[C_PINK]); }
-  /* dock planks */
-  fill(0,170,IN_W,13,d);
-  fill(0,170,IN_W,1,mulc(d,185));
-  for(int x=0;x<IN_W;x+=64){setpix(x,170,d2);setpix(x+1,170,d2);setpix(x,171,d2);}
-  for(int x=-30;x<IN_W;x+=64)fill(x+34,183,4,IN_H-183,d2);
-  for(int x=8;x<IN_W;x+=24)fill(x,164,2,4,d2);
+  /* dock: 16 voxel plank BOARDS - every board is its own MC plank cube with a
+     lit top / textured body / shaded bottom, dark seams between boards, grain
+     streaks and nail rows (MC plank blocks) */
+  for(int p=0;p<16;p++){
+    int x0=p*32;
+    vox_wood(x0,170,32,13,d,night?8:16,p);
+    if(p>0) fill(x0,170,1,13,mulc(d,38));   /* board seam */
+    for(int xx=x0+8;xx<x0+32;xx+=24) if(hash2(xx,p)%3==0) setpix(xx,171,mulc(d,75)); /* nails */
+  }
+  /* railing posts as lit cubes */
+  for(int x=8;x<IN_W;x+=24) vox_cube(x,164,2,6,d2,night?6:12,6,(x>>3)&255);
+  /* water pillars: lit top cap + 4 textured cube columns with left-lit /
+     right-shaded edges - EVERY column keeps its own per-pixel MC texture
+     (the old overdraw flattened the two outer columns into solid bars) */
+  for(int x=-30;x<IN_W;x+=64){
+    int sx=(x>>4)&255;
+    for(int yy=184;yy<IN_H;yy++){
+      int prevd=1000;
+      for(int k=0;k<4;k++){
+        unsigned hc=hash2((k>>1)*13+sx,(yy>>1)*17+((yy/4)&31));
+        int d=mc_texel_pct((int)hc);
+        d+=(int)(hash2(k*5+sx,yy*3)%3)-1;
+        if(k>0 && d==prevd) d=(d>=0)?d+1:d-1;
+        prevd=d;
+        int e=0;
+        if(k==0) e=-10; else if(k==3) e=10;   /* AO left / sunlit right */
+        setpix(x+34+k,yy,shade_c(texel_c(d2,d),e));
+      }
+    }
+    vox_cube(x+32,180,8,4,shade_c(d2,12),10,8,sx+31);
+  }
   /* post reflections */
   for(int x=-30;x<IN_W;x+=64){
     for(int y=183;y<200;y+=2){
@@ -1926,6 +2305,7 @@ static void update_top(float dt){
   }
 }
 static void draw_top(void){
+  g_nightlift=is_night()?22:0;   /* night keeps MC texels crisp instead of crushing to black */
   switch(state){
     case ST_TITLE: draw_title(); break;
     case ST_CUSTOM: draw_custom(); break;
