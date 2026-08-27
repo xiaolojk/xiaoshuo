@@ -148,10 +148,54 @@ static int draw_char(int x,int y,char c,Uint32 col,int scale){
   }
   return 8*scale;
 }
-static void draw_text(int x,int y,const char*s,Uint32 col,int scale){
-  while(*s){ char c=*s; if(c>='a'&&c<='z') c-=32; x+=draw_char(x,y,c,col,scale); s++; }
+/* ============ 12x12 CJK pixel font (subset) ============ */
+/* each glyph: 12 rows, 12 bits per row, bit0=leftmost */
+typedef struct { unsigned cp; const Uint16 g[12]; } CNGLYPH;
+static const CNGLYPH CTABLE[];
+static const Uint16* cn_glyph(unsigned cp){
+  static int lo=0, hi=-1;
+  if(hi<0){ for(hi=0; CTABLE[hi].cp; hi++); hi--; }
+  int l2=lo, h2=hi;
+  while(l2<=h2){ int m=(l2+h2)>>1; unsigned c=CTABLE[m].cp;
+    if(c==cp){ lo=m; return CTABLE[m].g; }
+    if(c<cp) l2=m+1; else h2=m-1; }
+  return NULL;
 }
-static int text_w(const char*s,int scale){ int n=0; while(*s){char c=*s;if(c>='a'&&c<='z')c-=32; n+=8*scale; s++;} return n; }
+static int draw_cjk_char(int x,int y,unsigned cp,Uint32 col,int scale){
+  const Uint16*g=cn_glyph(cp);
+  if(!g){ /* box fallback */
+    for(int r=0;r<12;r++)for(int b=0;b<12;b++){
+      int on=(r==0||r==11||b==0||b==11);
+      if(on) for(int a=0;a<scale;a++)for(int e=0;e<scale;e++) setpix(x+b*scale+e,y+r*scale+a,col);
+    }
+    return 13*scale;
+  }
+  for(int r=0;r<12;r++){
+    unsigned row=g[r];
+    for(int b=0;b<12;b++){
+      if((row>>(11-b))&1) for(int a=0;a<scale;a++)for(int e=0;e<scale;e++) setpix(x+b*scale+e,y+r*scale+a,col);
+    }
+  }
+  return 13*scale;
+}
+static int is_utf8_cjk(unsigned char c){ return c>=0xE0; }
+static void draw_text(int x,int y,const char*s,Uint32 col,int scale){
+  while(*s){
+    unsigned char c=(unsigned char)*s;
+    if(is_utf8_cjk(c)){
+      unsigned cp=((c&0x0F)<<12)|(((unsigned char)s[1]&0x3F)<<6)|((unsigned char)s[2]&0x3F);
+      x+=draw_cjk_char(x,y,cp,col,scale); s+=3;
+    } else { char ch=c; if(ch>='a'&&ch<='z') ch-=32; x+=draw_char(x,y,ch,col,scale); s++; }
+  }
+}
+static int text_w(const char*s,int scale){
+  int n=0; while(*s){
+    unsigned char c=(unsigned char)*s;
+    if(is_utf8_cjk(c)){ n+=13*scale; s+=3; }
+    else { char ch=c; if(ch>='a'&&ch<='z') ch-=32; n+=8*scale; s++; }
+  }
+  return n;
+}
 static void center_text(int cy,const char*s,Uint32 col,int scale){
   draw_text((IN_W-text_w(s,scale))/2, cy, s, col, scale);
 }
