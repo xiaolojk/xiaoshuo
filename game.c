@@ -1,19 +1,42 @@
 /* ============================================================
    PIXEL LAKE HEART  -  a low-end fishing game for Win7/Win10 x64
    Engine: SDL2, pure software pixel-art
-   v2: CG backdrops (Seedream) + 64x64 fish art + 30-frame
-   character animation + fishing motions + EN/CN bilingual
-   + 32x32 CJK font
+   v3: Minecraft-style hard-pixel 64x64 fish sprites (Seedream),
+   16x16 CJK font, ambient fish schools (Dave-style lake),
+   fish-approach bite, no night fishing, integer-scale letterbox
    ============================================================ */
 #define SDL_MAIN_HANDLED  /* we provide our own entry point on Windows */
-#include <SDL2/SDL.h>
+
+/* ============================================================
+   LAN multiplayer: cross-platform unreliable UDP (no external lib)
+   -- POSIX sockets (Linux/macOS) or Winsock (Windows)
+   -- non-blocking sockets polled each frame inside the SDL loop
+   ============================================================ */
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
 #include <time.h>
-#include "cjk_font_32x32.h"
+#include <ctype.h>
+#include <dirent.h>
+#include <SDL.h>
+#include "cjk_font_16x16.h"
 #include "cg_scenes.h"
+#include "fish_sprites.h"
 
 #define IN_W 512     /* logic grid (all layout code) */
 #define IN_H 288
@@ -134,16 +157,16 @@ static int draw_char(int x,int y,char c,Uint32 col,int scale){
     if((row>>(7-b))&1)for(int a=0;a<scale;a++)for(int e=0;e<scale;e++)setpix(x+b*scale+e,y+r*scale+a,col);}
   return 8*scale;
 }
-/* ---------- CJK 32x32 ---------- */
+/* ---------- CJK 16x16 ---------- */
 static int draw_cjk_char(int x,int y,unsigned cp,Uint32 col,int scale){
   int idx=cjk_find(cp);
-  if(idx<0){for(int r=0;r<24;r++)for(int b=0;b<24;b++){
-    int on=(r==0||r==23||b==0||b==23);
+  if(idx<0){for(int r=0;r<12;r++)for(int b=0;b<12;b++){
+    int on=(r==0||r==11||b==0||b==11);
     if(on)for(int a=0;a<scale;a++)for(int e=0;e<scale;e++)setpix(x+b*scale+e,y+r*scale+a,col);
-    }return 25*scale;}
-  for(int r=0;r<32;r++){const unsigned char*row=CJK_BITS[idx][r];
-    for(int b=0;b<32;b++)if(row[b])for(int a=0;a<scale;a++)for(int e=0;e<scale;e++)setpix(x+b*scale+e,y+r*scale+a,col);}
-  return 33*scale;
+    }return 13*scale;}
+  for(int r=0;r<16;r++){const unsigned char*row=CJK_BITS[idx][r];
+    for(int b=0;b<16;b++)if(row[b])for(int a=0;a<scale;a++)for(int e=0;e<scale;e++)setpix(x+b*scale+e,y+r*scale+a,col);}
+  return 17*scale;
 }
 static int is_utf8_cjk(unsigned char c){ return c>=0xE0; }
 static unsigned utf8_cp(const unsigned char*s){
@@ -157,7 +180,7 @@ static void draw_text(int x,int y,const char*s,Uint32 col,int scale){
 }
 static int text_w(const char*s,int scale){
   int n=0; while(*s){ unsigned char c=(unsigned char)*s;
-    if(is_utf8_cjk(c)){ n+=(cjk_find(utf8_cp((const unsigned char*)s))>=0?33:25)*scale; s+=3; }
+    if(is_utf8_cjk(c)){ n+=(cjk_find(utf8_cp((const unsigned char*)s))>=0?17:13)*scale; s+=3; }
     else{ char ch=c; if(ch>='a'&&ch<='z')ch-=32; n+=8*scale; s++; } }
   return n;
 }
@@ -184,33 +207,67 @@ static Uint32 dimc(Uint32 c){ return packrgb((c>>16&0xFF)*4/5,(c>>8&0xFF)*4/5,(c
 
 typedef struct{
   const char*en; const char*cn; int value,exp,weight,region,time,diff;
-  RGB3 body,belly,fin,acc; int pat; int cx,rx,ry;
 }FISH;
-static const FISH FISHES[10]={
- /*en            cn       val exp wt reg t dif body         belly        fin          acc             pat cx rx ry*/
- {"CARP","鲤鱼",    3,1,52,0,0,0,{214,150,60},{246,214,120},{150,105,55},{110,80,40},      1,38,26,18},
- {"PERCH","鲈鱼",   5,1,46,0,0,0,{120,170,92},{232,222,158},{92,132,70},{58,88,45},       2,38,26,17},
- {"SILVER CARP","银鲤",9,2,34,1,0,1,{192,212,226},{238,246,250},{152,172,192},{112,132,152},1,38,26,17},
- {"CATFISH","鲶鱼",12,2,28,1,2,1,{124,112,100},{212,202,186},{92,86,78},{66,60,54},       0,38,26,16},
- {"LARGEMOUTH","大口鲈",14,2,26,1,1,2,{92,152,96},{228,226,180},{72,122,82},{40,92,56},   2,38,26,16},
- {"BLUEGILL","蓝鳃鱼",22,3,16,1,1,2,{122,162,122},{232,152,90},{102,142,112},{72,112,82}, 0,36,24,15},
- {"SALMON","鲑鱼", 30,4,18,2,2,3,{202,192,182},{238,152,142},{182,172,166},{212,92,92},    1,38,26,16},
- {"GOLD TROUT","金鳟",40,4,12,2,1,3,{236,182,72},{246,212,132},{202,132,52},{222,70,60},   3,38,26,15},
- {"ELECTRIC EEL","电鳗",55,5,9,2,2,4,{72,82,122},{112,127,172},{52,62,96},{240,230,80},    4,30,33,10},
- {"LAKE DRAGON","湖龙",150,8,5,2,2,4,{62,152,162},{142,202,202},{122,72,202},{62,240,214}, 4,34,30,16},
+static FISH FISHES[10]={
+ /*en            cn       val exp wt reg t dif  (night fishing banned: all t=0/1)*/
+ {"CARP","鲤鱼",    3,1,52,0,0,0},
+ {"PERCH","鲈鱼",   5,1,46,0,0,0},
+ {"SILVER CARP","银鲤",9,2,34,1,0,1},
+ {"CATFISH","鲶鱼",12,2,28,1,0,1},
+ {"LARGEMOUTH","大口鲈",14,2,26,1,1,2},
+ {"BLUEGILL","蓝鳃鱼",22,3,16,1,1,2},
+ {"SALMON","鲑鱼", 30,4,18,2,0,3},
+ {"GOLD TROUT","金鳟",40,4,12,2,1,3},
+ {"ELECTRIC EEL","电鳗",55,5,9,2,0,4},
+ {"LAKE DRAGON","湖龙",150,8,5,2,0,4},
 };
 #define NFISH 10
 static Uint32 fsp[64*64];
-static void sp_put(int x,int y,Uint32 c){ if(x>=0&&x<64&&y>=0&&y<64)fsp[y*64+x]=c; }
-static void sp_hline(int x0,int x1,int y,Uint32 c){ for(int x=x0;x<=x1;x++)sp_put(x,y,c); }
+/* packed sprite palettes + facing (1 = head on LEFT of the 64x64 grid) */
+static Uint32 FSPR_PACK[10][16];
+static const int FSPR_FACE_LEFT[10]={1,0,1,1,1,1,0,0,1,1};
+/* mutable 64x64 fish pixel grids (initialized from fish_sprites.h, overridable by mods) */
+static unsigned char fsp_pix[10][4096];
+static void prep_fishspr(void){
+  for(int s=0;s<10;s++)for(int i=0;i<16;i++)
+    FSPR_PACK[s][i]=packrgb(FISHSPR_PAL[s][i][0],FISHSPR_PAL[s][i][1],FISHSPR_PAL[s][i][2]);
+  for(int s=0;s<10;s++)for(int k=0;k<4096;k++) fsp_pix[s][k]=FISHSPR_PIX[s][k];
+}
 
 /* Deterministic per-fish helper: shade body column top->bottom */
 static Uint32 mix3(Uint32 a,Uint32 b,float t){
   int r0=a>>16&0xFF,g0=a>>8&0xFF,b0=a&0xFF,r1=b>>16&0xFF,g1=b>>8&0xFF,b1=b&0xFF;
   return packrgb((int)(r0+(r1-r0)*t),(int)(g0+(g1-g0)*t),(int)(b0+(b1-b0)*t));
 }
-/* Exquisite 64x64 fish art: gradient body, overlapping scales, gill cover,
-   lateral line, 3 tail shapes, whiskers (catfish), dorsal/anal/pelvic fins. */
+/* color modes: 0 normal, 1 dimmed (uncaught), 2 underwater tint */
+static Uint32 fish_mode_col(Uint32 c,int mode){
+  if(mode==1) return dimc(c);
+  if(mode==2) return mulc(mix3(c,packrgb(60,120,170),0.25f),205); /* visible through water */
+  return c;
+}
+/* blit a 64x64 hard-pixel sprite from fish_sprites.h into fsp (optionally flipped) */
+static void render_fish_mode(int sp,int mode,int flip){
+  for(int y=0;y<64;y++)for(int x=0;x<64;x++){
+    int sx=flip?63-x:x;
+    unsigned char p=fsp_pix[sp][y*64+sx];
+    fsp[y*64+x]=(p==FISHSPR_TRANSP)?0:fish_mode_col(FSPR_PACK[sp][p],mode);
+  }
+}
+static void render_fish(int sp,int dim){ render_fish_mode(sp,dim?1:0,0); }
+/* fractional-scale nearest blit of fsp (transparent = 0) */
+static void blit_fish_f(float dx,float dy,float scale){
+  int step=(int)(64*scale);
+  if(step<1)step=1;
+  int ix=(int)dx,iy=(int)dy;
+  for(int y=0;y<step;y++){
+    int sy=(int)(y/scale);
+    for(int x=0;x<step;x++){
+      Uint32 c=fsp[sy*64+(int)(x/scale)];
+      if(c) setpix(ix+x,iy+y,c);
+    }
+  }
+}
+#if 0
 static void render_fish(int sp,int dim){
   for(int i=0;i<64*64;i++)fsp[i]=0;
   const FISH*F=&FISHES[sp];
@@ -313,6 +370,7 @@ static void render_fish(int sp,int dim){
   sp_put(clampij(ex+1,0,63),clampij(ey,0,63),dark);
   sp_put(clampij(ex,0,63),clampij(ey-1,0,63),packrgb(255,255,255));
 }
+#endif
 
 /* ---------- CG backdrops (phys-blitted for 1080p speed) ---------- */
 static Uint32 CG_PACK[4][96];
@@ -348,7 +406,13 @@ static void darkall(int a){
 }
 
 /* ---------- game state ---------- */
-enum{ST_TITLE,ST_CUSTOM,ST_INTRO,ST_PLAY,ST_REEL,ST_SHOP,ST_BAG,ST_QUIT};
+enum{ST_TITLE,ST_CUSTOM,ST_INTRO,ST_PLAY,ST_REEL,ST_SHOP,ST_BAG,ST_LANMENU,ST_QUIT};
+
+/* ---------- LAN multiplayer forward decls (defined later, after scenery) ---------- */
+static void net_update(float dt);
+static void net_draw(void);
+static void net_report_catch(int fishIndex);
+static int  net_in_room(void);
 static int state=ST_TITLE;
 
 /* ---------- character customization (Terraria-style) ---------- */
@@ -374,10 +438,12 @@ static float castT,phaseT,bobX,bobY,nibbleDelay;
 static float reelInd,reelTarget,reelZoneW,reelVel; static int reelGood,reelNeed,reelBad;
 static int coins=8,xp=0,level=1,caughtToday=0,day=1;
 static float timeH=7.0f;
-static int rodLevel=0,lureLevel=0,boat=0,lantern=0,netLevel=0;
+static int rodLevel=0,lureLevel=0,boat=0,netLevel=0;
 static int bagFill=0,bag[64]; static int caughtCount[NFISH];
 static float toastT=-1; static char toast[48];
 static float introT; static int slide=-1; static int menuSel=0;
+/* mod multipliers (set by mods/*.mod, default 1x) */
+static int modCoinMul=1, modXpMul=1;
 
 typedef struct{Uint8 space,accept,back,up,down,e,b,left,right;}PRESS;
 static PRESS press;
@@ -386,6 +452,287 @@ static int bagSize(void){ return 8+netLevel*4; }
 static void add_toast(const char*t){ strncpy(toast,t,47);toast[47]=0;toastT=2.0f; }
 static const char* spot_name(int r){ return r==0?T("SHORE","岸边"):(r==1?T("PIER","码头"):T("DEEP-WATER","深水")); }
 static int is_night(void){ return (timeH<6||timeH>=19); }
+
+/* ============================================================
+   SAVE / LOAD  --  progress persists in the per-user app-data dir
+   (Windows: %APPDATA%\PixelLakeHeart\PixelLakeHeart\save.dat
+    Linux:   ~/.local/share/PixelLakeHeart/PixelLakeHeart/save.dat)
+   ============================================================ */
+static char save_fullpath[600];
+static void save_path_init(void){
+  const char*pref=SDL_GetPrefPath("PixelLakeHeart","PixelLakeHeart");
+  if(pref) snprintf(save_fullpath,sizeof(save_fullpath),"%ssave.dat",pref);
+  else    snprintf(save_fullpath,sizeof(save_fullpath),"save.dat");
+}
+static void save_game(void){
+  save_path_init();
+  FILE*f=fopen(save_fullpath,"wb");
+  if(!f)return;
+  char hdr[8]={'P','L','H','S','A','V','E',3};
+  fwrite(hdr,1,8,f);
+  fwrite(&coins,sizeof(int),1,f);
+  fwrite(&xp,sizeof(int),1,f);
+  fwrite(&level,sizeof(int),1,f);
+  fwrite(&day,sizeof(int),1,f);
+  fwrite(&caughtToday,sizeof(int),1,f);
+  fwrite(&timeH,sizeof(float),1,f);
+  fwrite(&rodLevel,sizeof(int),1,f);
+  fwrite(&lureLevel,sizeof(int),1,f);
+  fwrite(&boat,sizeof(int),1,f);
+  fwrite(&netLevel,sizeof(int),1,f);
+  fwrite(&bagFill,sizeof(int),1,f);
+  fwrite(bag,sizeof(int),64,f);
+  fwrite(caughtCount,sizeof(int),NFISH,f);
+  fwrite(&cs_skin,sizeof(int),1,f);
+  fwrite(&cs_hair,sizeof(int),1,f);
+  fwrite(&cs_haircol,sizeof(int),1,f);
+  fwrite(&cs_shirt,sizeof(int),1,f);
+  fwrite(&cs_pants,sizeof(int),1,f);
+  fwrite(&lang,sizeof(int),1,f);
+  fclose(f);
+}
+static void load_game(void){
+  save_path_init();
+  FILE*f=fopen(save_fullpath,"rb");
+  if(!f)return;                              /* first run -> keep defaults */
+  char hdr[8];
+  if(fread(hdr,1,8,f)!=8 || memcmp(hdr,"PLHSAVE",7)!=0){fclose(f);return;}
+  fread(&coins,sizeof(int),1,f);
+  fread(&xp,sizeof(int),1,f);
+  fread(&level,sizeof(int),1,f);
+  fread(&day,sizeof(int),1,f);
+  fread(&caughtToday,sizeof(int),1,f);
+  fread(&timeH,sizeof(float),1,f);
+  fread(&rodLevel,sizeof(int),1,f);
+  fread(&lureLevel,sizeof(int),1,f);
+  fread(&boat,sizeof(int),1,f);
+  fread(&netLevel,sizeof(int),1,f);
+  fread(&bagFill,sizeof(int),1,f);
+  fread(bag,sizeof(int),64,f);
+  fread(caughtCount,sizeof(int),NFISH,f);
+  fread(&cs_skin,sizeof(int),1,f);
+  fread(&cs_hair,sizeof(int),1,f);
+  fread(&cs_haircol,sizeof(int),1,f);
+  fread(&cs_shirt,sizeof(int),1,f);
+  fread(&cs_pants,sizeof(int),1,f);
+  fread(&lang,sizeof(int),1,f);
+  if(level<1)level=1;
+  if(coins<0)coins=0;
+  if(bagFill<0)bagFill=0; if(bagFill>64)bagFill=64;
+  fclose(f);
+}
+
+/* ============================================================
+   MOD SYSTEM  --  data-file mods, no recompile needed.
+   Put .mod files next to the exe in a "mods/" folder.
+   Syntax (UTF-8 text, '#' = comment):
+     fish <0-9> value=.. exp=.. weight=.. diff=..   (override fish stats)
+     mult coins=.. xp=..                            (global multipliers)
+     shop <ROD|LURE|NET|BOAT> cost=..               (override shop price)
+     sprite <0-9>                                   (next 64 lines replace
+        ........                                       the fish's 64x64 pixels)
+   ============================================================ */
+static char* trim(char*s){
+  while(*s==' '||*s=='\t'||*s=='\r')s++;
+  char*e=s+strlen(s);
+  while(e>s&&(e[-1]==' '||e[-1]=='\t'||e[-1]=='\r'||e[-1]=='\n'))e--;
+  *e=0;
+  return s;
+}
+static void strip_crlf(char*s){
+  int n=(int)strlen(s);
+  while(n>0&&(s[n-1]=='\n'||s[n-1]=='\r'))s[--n]=0;
+}
+static int clamp_i(int v,int lo,int hi){ return v<lo?lo:(v>hi?hi:v); }
+/* shop item table (declared early so mods can override prices) */
+typedef struct{const char*name;int cost;int maxown;int*var;const char*cname;}MENUITEM;
+static MENUITEM SHOPITEMS[5]={
+  {"SELL ALL",0,0,0,"全部出售"},
+  {"ROD",30,3,0,"鱼竿"},
+  {"LURE",40,3,0,"鱼饵"},
+  {"NET",50,3,0,"渔网"},
+  {"BOAT",150,1,0,"小船"},
+};
+#define NSHOP 5
+static void mod_line_fish(char*tok){
+  int idx=atoi(tok);
+  if(idx<0||idx>=NFISH)return;
+  tok=strtok(tok," \t");          /* first token = fish number (consumed by atoi) */
+  tok=strtok(NULL," \t");         /* next token = first key=value */
+  while(tok){
+    char*eq=strchr(tok,'=');
+    if(eq){ *eq=0; int v=atoi(eq+1); const char*k=tok;
+      if(!strcmp(k,"value")) FISHES[idx].value=clamp_i(v,0,100000);
+      else if(!strcmp(k,"exp")) FISHES[idx].exp=clamp_i(v,0,10000);
+      else if(!strcmp(k,"weight")) FISHES[idx].weight=clamp_i(v,1,10000);
+      else if(!strcmp(k,"diff")) FISHES[idx].diff=clamp_i(v,0,4);
+    }
+    tok=strtok(NULL," \t");
+  }
+}
+static void mod_line_mult(char*tok){
+  tok=strtok(tok," \t");
+  while(tok){
+    char*eq=strchr(tok,'=');
+    if(eq){ *eq=0; int v=atoi(eq+1); const char*k=tok;
+      if(!strcmp(k,"coins")) modCoinMul=clamp_i(v,1,1000);
+      else if(!strcmp(k,"xp")) modXpMul=clamp_i(v,1,1000);
+    }
+    tok=strtok(NULL," \t");
+  }
+}
+static void mod_line_shop(char*tok){
+  char*name=strtok(tok," \t");
+  if(!name)return;
+  int idx=-1;
+  for(int i=0;i<NSHOP;i++) if(!strcmp(SHOPITEMS[i].name,name)){idx=i;break;}
+  if(idx<0)return;
+  tok=strtok(NULL," \t");
+  while(tok){
+    char*eq=strchr(tok,'=');
+    if(eq){ *eq=0; if(!strcmp(tok,"cost")) SHOPITEMS[idx].cost=clamp_i(atoi(eq+1),0,100000); }
+    tok=strtok(NULL," \t");
+  }
+}
+static void mod_line_palette(char*tok){
+  int idx=atoi(tok);
+  if(idx<0||idx>=NFISH)return;
+  tok=strtok(tok," \t");          /* first token = fish number */
+  tok=strtok(NULL," \t");         /* next token = color index 0..15 */
+  int ci=atoi(tok?tok:"0");
+  if(ci<0||ci>15)return;
+  int r=-1,g=-1,b=-1;
+  tok=strtok(NULL," \t");
+  while(tok){
+    char*eq=strchr(tok,'=');
+    if(eq){ *eq=0; int v=atoi(eq+1); const char*k=tok;
+      if(!strcmp(k,"r"))r=v; else if(!strcmp(k,"g"))g=v; else if(!strcmp(k,"b"))b=v;
+    }
+    tok=strtok(NULL," \t");
+  }
+  if(r>=0&&g>=0&&b>=0)
+    FSPR_PACK[idx][ci]=packrgb(clamp_i(r,0,255),clamp_i(g,0,255),clamp_i(b,0,255));
+}
+static void mod_apply_sprite(int idx,FILE*f){
+  char line[128];
+  int rows=0;
+  while(rows<64){
+    if(!fgets(line,sizeof(line),f))break;
+    strip_crlf(line);
+    const char*s=line;
+    while(*s==' '||*s=='\t')s++;           /* keep trailing spaces: they = transparent */
+    if(!*s||*s=='#')continue;
+    int len=(int)strlen(s);
+    for(int x=0;x<64;x++){
+      int v=255;
+      if(x<len){
+        char c=s[x];
+        if(c>='0'&&c<='9')v=c-'0';
+        else if(c>='a'&&c<='f')v=c-'a'+10;
+        else if(c>='A'&&c<='F')v=c-'A'+10;
+      }
+      fsp_pix[idx][rows*64+x]=(unsigned char)v;
+    }
+    rows++;
+  }
+}
+static void mod_load_file(const char*path){
+  FILE*f=fopen(path,"r");
+  if(!f)return;
+  char line[256];
+  while(fgets(line,sizeof(line),f)){
+    char*s=trim(line);
+    if(!*s||*s=='#')continue;
+    if(strncmp(s,"fish",4)==0&&(s[4]==' '||s[4]=='\t')) mod_line_fish(s+4);
+    else if(strncmp(s,"mult",4)==0&&(s[4]==' '||s[4]=='\t')) mod_line_mult(s+4);
+    else if(strncmp(s,"shop",4)==0&&(s[4]==' '||s[4]=='\t')) mod_line_shop(s+4);
+    else if(strncmp(s,"palette",7)==0&&(s[7]==' '||s[7]=='\t')) mod_line_palette(s+7);
+    else if(strncmp(s,"sprite",6)==0&&(s[6]==' '||s[6]=='\t')){
+      int idx=atoi(s+6);
+      if(idx>=0&&idx<NFISH) mod_apply_sprite(idx,f);
+    }
+  }
+  fclose(f);
+}
+static void mod_scan_and_load(void){
+  const char*base=SDL_GetBasePath();
+  if(!base)return;
+  char dir[600]; snprintf(dir,sizeof(dir),"%smods",base);
+  DIR*d=opendir(dir);
+  if(!d)return;                              /* no mods/ -> nothing to apply */
+  struct dirent*e;
+  while((e=readdir(d))!=NULL){
+    const char*nm=e->d_name;
+    int len=(int)strlen(nm);
+    if(len<4||strcmp(nm+len-4,".mod")!=0)continue;
+    char fp[700]; snprintf(fp,sizeof(fp),"%s/%s",dir,nm);
+    mod_load_file(fp);
+  }
+  closedir(d);
+}
+
+/* ---------- ambient fish schools: lake is alive before you cast ----------
+   (Dave-style: you always SEE fish cruising under the surface) */
+typedef struct{ int sp; float x,y,dir,spd,ph,sc; }AMBF;
+#define NAMB 9
+static AMBF AMB[NAMB];
+static void ambient_init(void){
+  for(int i=0;i<NAMB;i++){
+    AMB[i].sp=rndi(10);
+    AMB[i].x=rndf()*(IN_W+140)-70;
+    AMB[i].y=163.0f+rndf()*92.0f;
+    AMB[i].dir=(rndi(2))?1.0f:-1.0f;
+    AMB[i].spd=9.0f+rndf()*20.0f;
+    AMB[i].ph=rndf()*6.2832f;
+    AMB[i].sc=(AMB[i].sp>=8)?0.6f:(0.4f+rndf()*0.2f); /* legends a bit bigger */
+  }
+}
+static void ambient_update(float dt){
+  for(int i=0;i<NAMB;i++){
+    AMBF*a=&AMB[i];
+    a->x+=a->dir*a->spd*dt;
+    a->ph+=dt*1.5f;
+    if(a->x<-80.0f)a->x=(float)IN_W+79.0f;
+    if(a->x>(float)IN_W+80.0f)a->x=-79.0f;
+  }
+}
+static void draw_ambient(void){
+  int night=is_night();
+  for(int i=0;i<NAMB;i++){
+    AMBF*a=&AMB[i];
+    float yy=a->y+sinf(a->ph)*3.5f;
+    int moving_right=(a->dir>0.0f);
+    int face_left=FSPR_FACE_LEFT[a->sp];
+    int flip=(moving_right&&face_left)||(!moving_right&&!face_left);
+    /* underwater tint; extra dark veil at night (only on fish pixels) */
+    render_fish_mode(a->sp,2,flip);
+    blit_fish_f(a->x-32*a->sc,yy-32*a->sc,a->sc);
+    if(night){
+      int step=(int)(64*a->sc);
+      int bx0=(int)(a->x-32*a->sc), by0=(int)(yy-32*a->sc);
+      for(int y=0;y<step;y++)for(int x=0;x<step;x++){
+        Uint32 c=fsp[((int)(y/a->sc))*64+(int)(x/a->sc)];
+        if(c&&((x+y)&3)==0) setpix(bx0+x,by0+y,PACKED[C_DEEPWATER]);
+      }
+    }
+  }
+}
+/* Dave-style bite: the hooked fish visibly cruises toward the bobber */
+static void draw_bite_fish(void){
+  if(plannedFish<0)return;
+  int sp=plannedFish;
+  float t;
+  if(phase==PH_WAIT){ t=phaseT/(nibbleDelay>0?nibbleDelay:1.0f); if(t>1)t=1; }
+  else t=1.0f; /* nibble: right under the bobber */
+  float side=-1.0f; /* approach from the left */
+  float dist=(1.0f-t)*80.0f+10.0f;
+  float fx=bobX+side*dist-14.0f;
+  float fy=bobY+12.0f+sinf(phaseT*4.0f)*3.0f;
+  int flip=0; /* swims right (head right) */
+  if(FSPR_FACE_LEFT[sp]) flip=1;
+  render_fish_mode(sp,2,flip);
+  blit_fish_f(fx-16.0f,fy-16.0f,0.5f);
+}
 
 /* ---------- player figure (30-frame parametric) ---------- */
 static void P(int ox,int oy,int sc,int x,int y,int w,int h,Uint32 c){
@@ -518,10 +865,12 @@ static void update_reel(float dt){
       zonePh=rndf()*6.2832f;
       if(reelGood>=reelNeed){
         int ok=(plannedFish>=0)?plannedFish:0;
-        if(bagFill<bagSize()){bag[bagFill++]=ok;caughtCount[ok]++;xp+=FISHES[ok].exp;caughtToday++;}
+        net_report_catch(ok);
+        if(bagFill<bagSize()){bag[bagFill++]=ok;caughtCount[ok]++;xp+=FISHES[ok].exp*modXpMul;caughtToday++;}
         else add_toast(T("CHEST FULL - SELL IN SHOP","背包已满 - 去商店出售"));
         if(xp>=level*20){xp-=level*20;level++;add_toast(T("LEVEL UP!","升级了!"));}
         state=ST_PLAY;phase=PH_CATCHMSG;phaseT=0;
+        save_game();
       }
     } else {
       reelBad++;
@@ -599,6 +948,7 @@ static void update_play(float dt){
   playerX=clampij(playerX,20,IN_W-20);
   timeH+=(dt/420.0f)*24.0f; if(timeH>=24){timeH-=24;day++;caughtToday=0;}
   pAnimT+=dt;
+  ambient_update(dt);
   /* pick anim */
   int fishing=(phase==PH_CAST||phase==PH_WAIT||phase==PH_NIBBLE||phase==PH_MISS||phase==PH_CATCHMSG);
   if(fishing){ pAnim=(phase==PH_CAST)?PA_CAST:(phase==PH_MISS?PA_WAIT:PA_WAIT); }
@@ -606,8 +956,8 @@ static void update_play(float dt){
   else pAnim=PA_IDLE;
 
   if(phase==PH_IDLE){ if(press.space){
-      if(!is_night()||(lantern&&boat)) cast_line();
-      else add_toast(is_night()?T("NIGHT - BUY LANTERN","夜晚 - 购买灯笼"):T("GET GEAR AT B:SHOP","请在商店购买装备"));
+      if(!is_night()) cast_line();
+      else add_toast(T("CANNOT FISH AT NIGHT","夜晚不能钓鱼"));
   } }
   else if(phase==PH_CAST){ castT-=dt; if(castT<=0){phase=PH_WAIT;phaseT=0;pAnim=PA_WAIT;
       nibbleDelay=2.0f+rndf()*3.5f-rodLevel*0.5f; if(nibbleDelay<1.2f)nibbleDelay=1.2f;} }
@@ -783,12 +1133,6 @@ static void draw_dock(void){
     }
   }
 }
-static void draw_fish_shape(int x,int y,int len,Uint32 color){
-  int h=(len/3)+3;
-  fill(x,y-len/2,len,h,color);
-  fill(x-4,y-h/2,4,h,PACKED[C_SHADOW]);
-  setpix(x,y,PACKED[C_WHITE]);
-}
 /* draw player + rod + line + bobber */
 static void draw_player(void){
   int px=playerX-16;
@@ -808,7 +1152,9 @@ static void draw_player(void){
     int bx,by;
     float cp=0.0f;
     if(drawB){ cp=1.0f-(castT/0.5f); if(cp<0)cp=0; if(cp>1)cp=1; bx=playerX+(int)((bobX-playerX)*cp); by=(int)bobY+(int)(sinf(3.14159f*cp)*-70.0f); }
-    else { bx=(int)bobX; by=(int)bobY; }
+    else { bx=(int)bobX; by=(int)bobY;
+      if(phase==PH_NIBBLE){ /* Dave-style: bobber jiggles + dips when biting */
+        by+=(int)(sinf(phaseT*26.0f)*2.0f)+1; bx+=(int)(sinf(phaseT*17.0f)*1.0f); } }
     if(state==ST_REEL){ ang=-0.6f; len=34; }
     else { ang=(phase==PH_CAST)?(1.2f-1.8f*cp):(-1.1f); /* wait:nibble: -1.05..-1.25 */
            if(phase==PH_NIBBLE){ ang=-1.05f-0.2f*sinf(phaseT*30); }
@@ -827,11 +1173,14 @@ static void draw_player(void){
   }
 }
 static void draw_play(void){
-  draw_sky(); draw_water(); draw_dock();
+  draw_sky(); draw_water();
+  draw_ambient();            /* fish are ALWAYS visible cruising the lake */
+  draw_dock();
   int drawLine=(phase==PH_CAST||phase==PH_WAIT||phase==PH_NIBBLE||phase==PH_MISS||phase==PH_CATCHMSG);
   if(drawLine) draw_player();
   else draw_player();
-  if(phase==PH_WAIT){ int fx=90+((int)(phaseT*60))%(IN_W-160); draw_fish_shape(fx,(int)bobY+14,18,PACKED[C_CYAN]); }
+  /* Dave-style: fish approaches bobber while waiting, strikes on nibble */
+  if(phase==PH_WAIT||phase==PH_NIBBLE) draw_bite_fish();
   if(phase==PH_CATCHMSG&&plannedFish>=0){
     render_fish(plannedFish,0); blit_rgba((IN_W-64)/2,96,1,fsp,64,64);
   }
@@ -843,35 +1192,438 @@ static void draw_play(void){
   snprintf(b,64,T("SPOT:%s","位置:%s"),spot_name(spot)); draw_text(IN_W-text_w(b,1)-8,20,b,PACKED[C_SILVER],1);
   { const char*bs=T("B:SHOP","B:商店"); draw_text(IN_W-text_w(bs,1)-8,34,bs,PACKED[C_SILVER],1); }
   if(phase==PH_IDLE){
-    if(is_night()&&!(lantern&&boat)) center_text(224,T("NIGHT - BUY LANTERN","夜晚 - 请购买灯笼"),PACKED[C_WARN],1);
+    if(is_night()) center_text(224,T("NIGHT: NO FISHING - WAIT FOR DAWN","夜晚不能钓鱼 天亮再来"),PACKED[C_WARN],1);
     else center_text(224,T("SPACE TO CAST","按空格抛竿"),PACKED[C_WHITE],1);
   }
   if(phase==PH_NIBBLE) center_text(224,T("!!! BITE !!!","!!! 鱼咬钩了 !!!"),PACKED[C_WARN],1);
   if(phase==PH_CATCHMSG){ if(plannedFish>=0){ char s[48]; snprintf(s,48,T("CAUGHT %s!","捕获 %s!"),lang?FISHES[plannedFish].cn:FISHES[plannedFish].en); center_text(164,s,PACKED[C_GOLD],2); } }
 }
 
+/* ============================================================
+   LAN MULTIPLAYER  -- 同湖共钓 + 共享排行榜 (UDP 无头同步)
+   ------------------------------------------------------------
+   一人创建房间(HOST)，好友加入(JOIN)。所有人站在同一片湖岸
+   各自钓鱼，实时看到彼此，钓到的鱼上报主机，主机汇总全房间
+   累计价值并广播共享排行榜。
+   协议（一行一条，逗号分列，\n 结尾）：
+     客户端>主机  JOIN  skin,hair,hcol,shirt,pants,label
+     客户端>主机  STATE x,anim,phase
+     客户端>主机  CATCH fishIndex,value
+     主机>客户端  YOU   id
+     主机>客户端  PJOIN id,sk,h,hc,sh,p,label,x,anim,phase,total,count
+     主机>客户端  PLEFT id
+     主机>客户端  PSTATE id,x,anim,phase
+     主机>客户端  SCORE id,total,count
+   ============================================================ */
+#define NET_PORT       3317u
+#define NET_MAXPLAYERS 8
+#define NET_TICK       100u   /* ms between state broadcasts */
+#if defined(_WIN32)
+typedef SOCKET NETFD;
+#else
+typedef int NETFD;
+#endif
+#ifndef INVALID_NETFD
+#define INVALID_NETFD (-1)
+#endif
+
+typedef struct{
+  int   active,isHost,myId;
+  int   x,anim,phase;
+  int   skin,hair,hcol,shirt,pants;
+  char  label[16];
+  int   total,count;
+  Uint32 lastSeen;
+}NETP;
+
+static NETFD net_fd=(NETFD)INVALID_NETFD;
+static int   net_role=0;        /* 0=none 1=host 2=client */
+static int   net_me=-1;         /* my own player id (-1 = unknown) */
+static NETP  net_players[NET_MAXPLAYERS];
+static struct sockaddr_in net_peer;                /* client -> host addr */
+static struct sockaddr_in net_cliaddr[NET_MAXPLAYERS]; /* host -> client addr */
+static Uint32 net_last=0;
+static int   net_connected=0;   /* client: YOU received */
+/* room menu state */
+static int   lanSel=0;          /* 0 create 1 join 2 back */
+static int   lanEdit=0;         /* typing an IP */
+static char  joinBuf[40];
+static void net_close(void);
+static void net_bcast_player2(int id,int skip);
+static int  net_start_join(const char*ip);
+static int  net_start_host(void);
+
+static int net_addr_eq(const struct sockaddr_in*a,const struct sockaddr_in*b){
+  return a->sin_port==b->sin_port && a->sin_addr.s_addr==b->sin_addr.s_addr;
+}
+static void net_sendto(const struct sockaddr_in*dst,const char*line){
+  if(net_fd==INVALID_NETFD||!dst)return;
+  size_t n=strlen(line); char buf[300];
+  if(n+2>sizeof(buf))return;
+  memcpy(buf,line,n); buf[n]='\n'; buf[n+1]=0;
+  sendto(net_fd,buf,(int)n+1,0,(const struct sockaddr*)dst,sizeof(*dst));
+}
+#if defined(_WIN32)
+static void net_cleanup_wsa(void){ WSACleanup(); }
+#endif
+static int net_open(unsigned port){
+#if defined(_WIN32)
+  WSADATA wd; if(WSAStartup(MAKEWORD(2,2),&wd)!=0)return 0;
+#endif
+  net_fd=(NETFD)socket(AF_INET,SOCK_DGRAM,0);
+  if(net_fd==(NETFD)INVALID_NETFD){
+#if defined(_WIN32)
+    WSACleanup();
+#endif
+    return 0;
+  }
+  int one=1; setsockopt(net_fd,SOL_SOCKET,SO_REUSEADDR,(const char*)&one,sizeof(one));
+  struct sockaddr_in a; memset(&a,0,sizeof(a));
+  a.sin_family=AF_INET; a.sin_addr.s_addr=htonl(INADDR_ANY); a.sin_port=htons(port);
+  if(bind(net_fd,(struct sockaddr*)&a,sizeof(a))!=0){ net_close(); return 0; }
+#if defined(_WIN32)
+  u_long nb=1; ioctlsocket(net_fd,FIONBIO,&nb);
+#else
+  { int fl=fcntl(net_fd,F_GETFL,0); fcntl(net_fd,F_SETFL,fl|O_NONBLOCK); }
+#endif
+  return 1;
+}
+static void net_close(void){
+  if(net_fd!=(NETFD)INVALID_NETFD){
+#if defined(_WIN32)
+    closesocket(net_fd); WSACleanup();
+#else
+    close(net_fd);
+#endif
+    net_fd=(NETFD)INVALID_NETFD;
+  }
+  memset(net_players,0,sizeof(net_players));
+  net_role=0; net_connected=0; net_me=-1;
+}
+
+/* ---- host helpers ---- */
+static void net_bcast(const char*line){
+  for(int i=1;i<NET_MAXPLAYERS;i++)
+    if(net_players[i].active) net_sendto(&net_cliaddr[i],line);
+}
+static void net_send_player_to(const struct sockaddr_in*dst,int id){
+  NETP*p=&net_players[id]; char b[300];
+  snprintf(b,sizeof(b),"PJOIN %d,%d,%d,%d,%d,%d,%s,%d,%d,%d,%d,%d",
+     p->myId,p->skin,p->hair,p->hcol,p->shirt,p->pants,p->label,
+     p->x,p->anim,p->phase,p->total,p->count);
+  net_sendto(dst,b);
+}
+static void net_bcast_player(int id){ net_bcast_player2(id,0); }
+static void net_bcast_player2(int id,int skip){
+  char b[300]; NETP*p=&net_players[id];
+  snprintf(b,sizeof(b),"PJOIN %d,%d,%d,%d,%d,%d,%s,%d,%d,%d,%d,%d",
+     p->myId,p->skin,p->hair,p->hcol,p->shirt,p->pants,p->label,
+     p->x,p->anim,p->phase,p->total,p->count);
+  for(int i=1;i<NET_MAXPLAYERS;i++)
+    if(i!=skip&&net_players[i].active) net_sendto(&net_cliaddr[i],b);
+}
+static void net_bcast_scores(void){
+  for(int i=0;i<NET_MAXPLAYERS;i++) if(net_players[i].active){
+    char b[48]; snprintf(b,sizeof(b),"SCORE %d,%d,%d",net_players[i].myId,net_players[i].total,net_players[i].count);
+    net_bcast(b);
+  }
+}
+static void net_bcast_pleft(int id){
+  char b[24]; snprintf(b,sizeof(b),"PLEFT %d",id); net_bcast(b);
+}
+static int net_slot_by_addr(const struct sockaddr_in*from){
+  for(int i=1;i<NET_MAXPLAYERS;i++)
+    if(net_players[i].active && net_addr_eq(&net_cliaddr[i],from)) return i;
+  return -1;
+}
+
+/* ---- host message handlers ---- */
+static void net_host_join(const struct sockaddr_in*from,const char*arg){
+  int id=-1; for(int i=1;i<NET_MAXPLAYERS;i++) if(!net_players[i].active){id=i;break;}
+  if(id<0)return;                         /* room full */
+  int skin=0,hair=0,hcol=1,shirt=0,pants=0; char lab[16]="P";
+  sscanf(arg,"%d,%d,%d,%d,%d,%15s",&skin,&hair,&hcol,&shirt,&pants,lab);
+  NETP*p=&net_players[id]; memset(p,0,sizeof(*p));
+  p->active=1;p->myId=id;p->isHost=0;p->skin=skin;p->hair=hair;
+  p->hcol=hcol;p->shirt=shirt;p->pants=pants;
+  snprintf(p->label,16,"%s",lab);
+  p->x=20+rndi(IN_W-40); p->anim=0; p->phase=0;
+  net_cliaddr[id]=*from; p->lastSeen=SDL_GetTicks();
+  char b[24]; snprintf(b,sizeof(b),"YOU %d",id); net_sendto(from,b);
+  net_bcast_player2(id,id);               /* tell the others about the newcomer */
+  for(int j=0;j<NET_MAXPLAYERS;j++)        /* tell the newcomer about everyone */
+    if(j!=id&&net_players[j].active) net_send_player_to(from,j);
+  net_bcast_scores();
+}
+static void net_host_state(const struct sockaddr_in*from,const char*arg){
+  int i=net_slot_by_addr(from); if(i<0)return;
+  int x=net_players[i].x,a=net_players[i].anim,ph=net_players[i].phase;
+  sscanf(arg,"%d,%d,%d",&x,&a,&ph);
+  net_players[i].x=x; net_players[i].anim=a; net_players[i].phase=ph;
+  net_players[i].lastSeen=SDL_GetTicks();
+}
+static void net_host_catch(const struct sockaddr_in*from,const char*arg){
+  int i=net_slot_by_addr(from); if(i<0)return;
+  int fi=0,v=0; sscanf(arg,"%d,%d",&fi,&v);
+  net_players[i].total+=v; net_players[i].count++;
+  net_bcast_scores();
+}
+static void net_host_tick(void){
+  net_players[0].x=playerX; net_players[0].anim=pAnim; net_players[0].phase=phase;
+  for(int c=1;c<NET_MAXPLAYERS;c++) if(net_players[c].active){
+    struct sockaddr_in*dst=&net_cliaddr[c];
+    for(int j=0;j<NET_MAXPLAYERS;j++)
+      if(net_players[j].active && j!=c){
+        char b[48]; snprintf(b,sizeof(b),"PSTATE %d,%d,%d,%d",
+           net_players[j].myId,net_players[j].x,net_players[j].anim,net_players[j].phase);
+        net_sendto(dst,b);
+      }
+  }
+  net_bcast_scores();
+}
+static void net_host_timeout(void){
+  Uint32 now=SDL_GetTicks();
+  for(int i=1;i<NET_MAXPLAYERS;i++)
+    if(net_players[i].active && now-net_players[i].lastSeen>3000u){
+      net_bcast_pleft(i); net_players[i].active=0;
+      add_toast(T("PLAYER LEFT ROOM","有玩家离开了房间"));
+    }
+}
+
+/* ---- client handlers ---- */
+static void net_cli_you(char*arg){ int id=atoi(arg);
+  if(id>=0&&id<NET_MAXPLAYERS){
+    memset(&net_players[id],0,sizeof(net_players[id]));
+    net_players[id].active=1; net_players[id].myId=id;
+    net_players[id].skin=cs_skin; net_players[id].hair=cs_hair;
+    net_players[id].hcol=cs_haircol; net_players[id].shirt=cs_shirt;
+    net_players[id].pants=cs_pants; strcpy(net_players[id].label,"ME");
+    net_players[id].x=playerX;
+    net_connected=1; net_me=id;
+    add_toast(T("JOINED ROOM!","已加入房间！"));
+  }
+}
+/* ---- client + room-menu layer (was lost in a corrupted edit, re-added) ---- */
+static const char* net_next(const char*t){
+  const char*c=strchr(t,',');
+  return c?c+1:t+(int)strlen(t);
+}
+static void net_cli_pleft(char*arg){
+  int id=atoi(arg);
+  if(id>=0&&id<NET_MAXPLAYERS){
+    net_players[id].active=0;
+    add_toast(T("PLAYER LEFT ROOM","有玩家离开了房间"));
+  }
+}
+static void net_cli_pjoin(char*arg){
+  int id=atoi(arg);
+  NETP np; memset(&np,0,sizeof(np));
+  np.active=1; np.myId=id; np.isHost=(id==0);
+  np.skin=0; np.hair=0; np.hcol=1; np.shirt=0; np.pants=0;
+  strcpy(np.label,"P"); np.x=-999; np.anim=0; np.phase=0; np.total=0; np.count=0;
+  const char*t=net_next(arg);
+  np.skin=atoi(t); t=net_next(t);
+  np.hair=atoi(t); t=net_next(t);
+  np.hcol=atoi(t); t=net_next(t);
+  np.shirt=atoi(t); t=net_next(t);
+  np.pants=atoi(t); t=net_next(t);
+  { const char*c=strchr(t,','); int ln=c?(int)(c-t):(int)strlen(t);
+    if(ln>15)ln=15; memcpy(np.label,t,ln); np.label[ln]=0;
+    if(c){ t=c+1;
+      np.x=atoi(t); t=net_next(t);
+      np.anim=atoi(t); t=net_next(t);
+      np.phase=atoi(t); t=net_next(t);
+      np.total=atoi(t); t=net_next(t);
+      np.count=atoi(t);
+    } }
+  if(id>=0&&id<NET_MAXPLAYERS) net_players[id]=np;
+}
+static void net_cli_pstate(char*arg){
+  int id=atoi(arg);
+  if(id<0||id>=NET_MAXPLAYERS||!net_players[id].active||id==net_me)return;
+  const char*t=net_next(arg);
+  net_players[id].x=atoi(t); t=net_next(t);
+  net_players[id].anim=atoi(t); t=net_next(t);
+  net_players[id].phase=atoi(t);
+}
+static void net_cli_score(char*arg){
+  int id=atoi(arg);
+  if(id<0||id>=NET_MAXPLAYERS)return;
+  const char*t=net_next(arg);
+  net_players[id].total=atoi(t); t=net_next(t);
+  net_players[id].count=atoi(t);
+}
+static void net_cli_tick(void){
+  char b[48]; snprintf(b,sizeof(b),"STATE %d,%d,%d",playerX,pAnim,phase);
+  net_sendto(&net_peer,b);
+}
+
+/* ---- message dispatch + receive ---- */
+static void net_handle_line(const struct sockaddr_in*from,char*line){
+  char*e=strchr(line,'\n'); if(e)*e=0;
+  char*cmd=line; char*arg=cmd;
+  while(*arg&&*arg!=' '&&*arg!='\t')arg++;
+  if(*arg){*arg=0;arg++;} else arg="";
+  if(net_role==1){
+    if(!strcmp(cmd,"JOIN")) net_host_join(from,arg);
+    else if(!strcmp(cmd,"STATE")) net_host_state(from,arg);
+    else if(!strcmp(cmd,"CATCH")) net_host_catch(from,arg);
+  } else if(net_role==2){
+    if(!strcmp(cmd,"YOU")) net_cli_you(arg);
+    else if(!strcmp(cmd,"PJOIN")) net_cli_pjoin(arg);
+    else if(!strcmp(cmd,"PLEFT")) net_cli_pleft(arg);
+    else if(!strcmp(cmd,"PSTATE")) net_cli_pstate(arg);
+    else if(!strcmp(cmd,"SCORE")) net_cli_score(arg);
+  }
+}
+static void net_recv(void){
+  char buf[320];
+  for(int k=0;k<32;k++){
+    struct sockaddr_in from; socklen_t fl=sizeof(from);
+    int n=(int)recvfrom(net_fd,buf,sizeof(buf)-1,0,(struct sockaddr*)&from,&fl);
+    if(n<=0)break;
+    buf[n]=0; net_handle_line(&from,buf);
+  }
+}
+static void net_update(float dt){
+  (void)dt;
+  if(net_role==0)return;
+  net_recv();
+  Uint32 now=SDL_GetTicks();
+  if(now-net_last>=NET_TICK){
+    net_last=now;
+    if(net_role==1) net_host_tick();
+    else if(net_role==2&&net_connected) net_cli_tick();
+  }
+  if(net_role==1) net_host_timeout();
+}
+
+/* ---- room start ---- */
+static int net_start_host(void){
+  if(!net_open(NET_PORT))return 0;
+  net_role=1; net_me=0;
+  memset(net_players,0,sizeof(net_players));
+  NETP*me=&net_players[0];
+  me->active=1; me->isHost=1; me->myId=0;
+  me->skin=cs_skin; me->hair=cs_hair; me->hcol=cs_haircol;
+  me->shirt=cs_shirt; me->pants=cs_pants;
+  snprintf(me->label,16,"HOST");
+  me->x=playerX; me->lastSeen=SDL_GetTicks();
+  net_last=SDL_GetTicks();
+  add_toast(T("ROOM OPEN!","房间已开启！"));
+  return 1;
+}
+static int net_start_join(const char*ip){
+  unsigned long a=inet_addr(ip);
+  if(a==(unsigned long)INADDR_NONE)return 0;
+  if(!net_open(NET_PORT))return 0;
+  memset(&net_peer,0,sizeof(net_peer));
+  net_peer.sin_family=AF_INET; net_peer.sin_port=htons(NET_PORT);
+  net_peer.sin_addr.s_addr=a;
+  net_role=2; net_me=-1;
+  memset(net_players,0,sizeof(net_players));
+  net_connected=0; net_last=SDL_GetTicks();
+  char b[128]; snprintf(b,sizeof(b),"JOIN %d,%d,%d,%d,%d,ME",
+     cs_skin,cs_hair,cs_haircol,cs_shirt,cs_pants);
+  net_sendto(&net_peer,b);
+  return 1;
+}
+static int net_in_room(void){ return net_role!=0; }
+static void net_report_catch(int fi){
+  if(fi<0||fi>=NFISH)return;
+  if(net_role==1){
+    net_players[0].total+=FISHES[fi].value; net_players[0].count++;
+    net_bcast_scores();
+  } else if(net_role==2&&net_connected){
+    char b[48]; snprintf(b,sizeof(b),"CATCH %d,%d",fi,FISHES[fi].value);
+    net_sendto(&net_peer,b);
+  }
+}
+
+/* ---- draw remote players + shared leaderboard ---- */
+static void net_draw(void){
+  if(net_role==0)return;
+  int me=(net_role==1)?0:net_me;
+  if(me>=0) net_players[me].x=playerX;
+  for(int i=0;i<NET_MAXPLAYERS;i++){
+    if(!net_players[i].active||i==me)continue;
+    if(net_players[i].x<-900)continue;
+    int s_sk=cs_skin,s_h=cs_hair,s_hc=cs_haircol,s_sh=cs_shirt,s_pa=cs_pants;
+    cs_skin=net_players[i].skin; cs_hair=net_players[i].hair;
+    cs_haircol=net_players[i].hcol; cs_shirt=net_players[i].shirt;
+    cs_pants=net_players[i].pants;
+    int ox=net_players[i].x-16; int hx,hy;
+    draw_person(ox,124,2,net_players[i].anim,(float)SDL_GetTicks()/1000.0f,&hx,&hy);
+    const char*lbl=net_players[i].label;
+    draw_text(net_players[i].x-text_w(lbl,1)/2,110,lbl,PACKED[C_YELLOW],1);
+    cs_skin=s_sk; cs_hair=s_h; cs_haircol=s_hc; cs_shirt=s_sh; cs_pants=s_pa;
+  }
+  NETP*ord[NET_MAXPLAYERS]; int n=0;
+  for(int i=0;i<NET_MAXPLAYERS;i++) if(net_players[i].active) ord[n++]=&net_players[i];
+  for(int a=1;a<n;a++){ NETP*k=ord[a]; int b=a-1;
+    while(b>=0&&ord[b]->total<k->total){ ord[b+1]=ord[b]; b--; } ord[b+1]=k; }
+  int yy=244; int cnt=0;
+  for(int k=0;k<n&&cnt<3;k++){
+    char b[64]; snprintf(b,64,"%s $%d x%d",ord[k]->label,ord[k]->total,ord[k]->count);
+    draw_text(8,yy,b,(me>=0&&ord[k]==&net_players[me])?PACKED[C_GOLD]:PACKED[C_WHITE],1);
+    yy+=13; cnt++;
+  }
+  if(n>3){ char b[24]; snprintf(b,24,"+%d MORE",n-3); draw_text(8,yy,b,PACKED[C_SILVER],1); }
+  char s[32]; snprintf(s,32,"LAN %s (port %u)",net_role==1?"HOST":"CLIENT",NET_PORT);
+  draw_text(IN_W-text_w(s,1)-8,50,s,PACKED[C_CYAN],1);
+}
+
+/* ---- room menu ---- */
+static void lan_menu_open(void){ lanSel=0; lanEdit=0; joinBuf[0]=0; state=ST_LANMENU; net_close(); }
+static void update_lanmenu(void){
+  if(lanEdit)return;                 /* text input handled in event loop */
+  if(press.up&&lanSel>0)lanSel--;
+  if(press.down&&lanSel<2)lanSel++;
+  if(press.accept){
+    if(lanSel==0){ if(net_start_host()){ state=ST_PLAY; phase=PH_IDLE; phaseT=0; } }
+    else if(lanSel==1){ lanEdit=1; joinBuf[0]=0; }
+    else state=ST_TITLE;
+  }
+  if(press.back)state=ST_TITLE;
+}
+static void draw_lanmenu(void){
+  draw_cg_pan(1,((int)(SDL_GetTicks()/80))%IN_W);
+  darkall(120);
+  center_text(12,T("LAN MULTIPLAYER","局域网联机"),PACKED[C_GOLD],2);
+  center_text(28,T("SAME LAKE, LIVE TOGETHER","同湖共钓 实时在线"),PACKED[C_CYAN],1);
+  if(lanEdit){
+    center_text(70,T("ENTER HOST IP","输入主机IP"),PACKED[C_SILVER],1);
+    { int w=text_w(joinBuf,2); int bx=(IN_W-w)/2;
+      draw_text(bx,90,joinBuf,PACKED[C_WHITE],2);
+      if((SDL_GetTicks()/400)%2) draw_text(bx+w,90,"_",PACKED[C_GOLD],2); }
+    center_text(140,T("ENTER JOIN  ESC BACK   NUMBERS & .","回车加入  退出返回  数字和点"),PACKED[C_SILVER],1);
+    return;
+  }
+  const char*op[3]={ T("CREATE ROOM","创建房间"),T("JOIN ROOM","加入房间"),T("BACK","返回") };
+  int y=78;
+  for(int i=0;i<3;i++){
+    Uint32 c=(i==lanSel)?PACKED[C_GOLD]:PACKED[C_WHITE];
+    int w=text_w(op[i],1); draw_text((IN_W-w)/2,y,op[i],c,2);
+    if(i==lanSel) draw_text((IN_W-w)/2-26,y,">",PACKED[C_GOLD],2);
+    y+=34;
+  }
+  center_text(222,T("UP/DOWN SELECT  SPACE OK","上下选择 空格确认"),PACKED[C_SILVER],1);
+  char pb[24]; snprintf(pb,24,T("PORT %u","端口 %u"),NET_PORT);
+  center_text(236,pb,PACKED[C_SILVER],1);
+}
+
 /* ---------- shop ---------- */
-typedef struct{const char*name;int cost;int maxown;int*var;const char*cname;}MENUITEM;
-static MENUITEM SHOPITEMS[6]={
-  {"SELL ALL",0,0,0,"全部出售"},
-  {"ROD",30,3,0,"鱼竿"},
-  {"LURE",40,3,0,"鱼饵"},
-  {"NET",50,3,0,"渔网"},
-  {"BOAT",150,1,0,"小船"},
-  {"LANTERN",45,1,0,"灯笼"},
-};
-#define NSHOP 6
 static void shop_links(void){
   SHOPITEMS[1].var=&rodLevel;SHOPITEMS[2].var=&lureLevel;
-  SHOPITEMS[3].var=&netLevel;SHOPITEMS[4].var=&boat;SHOPITEMS[5].var=&lantern;
+  SHOPITEMS[3].var=&netLevel;SHOPITEMS[4].var=&boat;
 }
 static void update_shop(void){
   if(press.up&&menuSel>0)menuSel--;
   if(press.down&&menuSel<NSHOP-1)menuSel++;
   if(press.accept){ MENUITEM*m=&SHOPITEMS[menuSel];
-    if(menuSel==0){ if(bagFill>0){int sum=0;for(int i=0;i<bagFill;i++)sum+=FISHES[bag[i]].value;coins+=sum;bagFill=0;add_toast(T("SOLD","已出售"));}
+    if(menuSel==0){ if(bagFill>0){int sum=0;for(int i=0;i<bagFill;i++)sum+=FISHES[bag[i]].value;coins+=sum*modCoinMul;bagFill=0;add_toast(T("SOLD","已出售"));save_game();}
       else add_toast(T("NOTHING TO SELL","没有可卖的")); }
-    else if(*m->var<m->maxown){ if(coins>=m->cost){coins-=m->cost;(*m->var)++;add_toast(T("PURCHASED","已购买"));} else add_toast(T("NOT ENOUGH COINS","金币不足")); }
+    else if(*m->var<m->maxown){ if(coins>=m->cost){coins-=m->cost;(*m->var)++;add_toast(T("PURCHASED","已购买"));save_game();} else add_toast(T("NOT ENOUGH COINS","金币不足")); }
     else add_toast(T("ALREADY MAX","已是最大")); }
   if(press.back)state=ST_PLAY;
 }
@@ -976,8 +1728,8 @@ static void draw_bag(void){
   char b[96];
   snprintf(b,96,T("COINS %d  LEVEL %d  EXP %d/%d","金币 %d  等级 %d  经验 %d/%d"),coins,level,xp,level*20);
   draw_text(24,20,b,PACKED[C_YELLOW],1);
-  snprintf(b,96,T("DAY %d  CHEST %d/%d  ROD%d LURE%d NET%d  BOAT:%s  LANTERN:%s",
-      "第%d天  渔获 %d/%d  竿%d 饵%d 网%d  船:%s  灯:%s"),day,bagFill,bagSize(),rodLevel,lureLevel,netLevel,boat?"Y":"N",lantern?"Y":"N");
+  snprintf(b,96,T("DAY %d  CHEST %d/%d  ROD%d LURE%d NET%d  BOAT:%s",
+      "第%d天  渔获 %d/%d  竿%d 饵%d 网%d  船:%s"),day,bagFill,bagSize(),rodLevel,lureLevel,netLevel,boat?"Y":"N");
   draw_text(24,34,b,lang?PACKED[C_CYAN]:PACKED[C_WHITE],1);
   /* 64x64 grid */
   int tile=64, gap=12;
@@ -1148,14 +1900,15 @@ static void draw_title(void){
   draw_text(lx+ (76-w1)/2, ly+16, op1, lang==1?PACKED[C_GOLD]:PACKED[C_WHITE],1);
   if(lang==0) draw_text(lx-10,ly+3,">",PACKED[C_GOLD],1); else draw_text(lx-10,ly+19,">",PACKED[C_GOLD],1);
   center_text(176,(SDL_GetTicks()/320)%2? T("PRESS SPACE / [1][2]","按空格 或 [1][2]"):T("PRESS SPACE / [1][2]","按空格 或 [1][2]"),PACKED[C_GOLD],2);
-  center_text(200,T("ARROWS ?? SELECT LANGUAGE","方向键 选择语言"),PACKED[C_SILVER],1);
+  center_text(200,T("ARROWS: SELECT LANGUAGE","方向键 选择语言"),PACKED[C_SILVER],1);
   center_text(214,T("WIN7-WIN10 X64  PIXEL MODE","WIN7-WIN10 64位 像素模式"),PACKED[C_SILVER],1);
-  center_text(228,T("F11 FULLSCREEN  ARROWS MOVE","F11全屏  方向键移动"),PACKED[C_SILVER],1);
+  center_text(228,T("F: FULLSCREEN  ARROWS: MOVE","F键全屏  方向键移动"),PACKED[C_SILVER],1);
 }
 
 /* ---------- dispatchers ---------- */
 static void update_top(float dt){
   if(toastT>0){ toastT-=dt; if(toastT<0)toastT=0; }
+  net_update(dt);
   if(state==ST_PLAY){
     if(press.e){state=ST_BAG;menuSel=0;}
     if(press.b){state=ST_SHOP;menuSel=0;keeperLine=-1;}
@@ -1168,6 +1921,7 @@ static void update_top(float dt){
     case ST_REEL: update_reel(dt); break;
     case ST_SHOP: update_shop(); break;
     case ST_BAG: update_bag(); break;
+    case ST_LANMENU: update_lanmenu(); break;
     default: break;
   }
 }
@@ -1176,10 +1930,11 @@ static void draw_top(void){
     case ST_TITLE: draw_title(); break;
     case ST_CUSTOM: draw_custom(); break;
     case ST_INTRO: draw_intro(); break;
-    case ST_PLAY: draw_play(); break;
+    case ST_PLAY: draw_play(); net_draw(); break;
     case ST_REEL: draw_reel(); break;
     case ST_SHOP: draw_shop(); break;
     case ST_BAG: draw_bag(); break;
+    case ST_LANMENU: draw_lanmenu(); break;
     default: break;
   }
   if(toastT>0){fill(0,264,IN_W,22,PACKED[C_BLACK]);center_text(272,toast,PACKED[C_YELLOW],1);}
@@ -1241,10 +1996,11 @@ static void selftest(SDL_Window*win,SDL_Renderer*ren,SDL_Texture*tex){
   /* 5) casting arc (mid-cast) */
   timeH=14.0f; phase=PH_CAST; pAnim=PA_CAST; castT=0.25f; bobX=340; bobY=190;
   st_wait(ren,tex,0.1f); st_shot("06_casting");
-  /* 6) waiting + fish shadow */
+  /* 6) waiting: Dave-style fish approaching the bobber */
   phase=PH_WAIT; pAnim=PA_WAIT; phaseT=1.2f; bobX=330; bobY=185;
+  plannedFish=6; nibbleDelay=3.0f;
   st_wait(ren,tex,0.3f); st_shot("07_waiting");
-  /* 7) nibble */
+  /* 7) nibble: fish strikes, bobber jiggles */
   phase=PH_NIBBLE; phaseT=0.3f; st_wait(ren,tex,0.15f); st_shot("08_nibble");
   /* 8) catch message w/ 64x64 fish */
   phase=PH_CATCHMSG; plannedFish=7; phaseT=0.5f;
@@ -1269,6 +2025,34 @@ static void selftest(SDL_Window*win,SDL_Renderer*ren,SDL_Texture*tex){
   for(int i=0;i<10;i++){bag[i]=i;caughtCount[i]=1;}
   lang=0; st_wait(ren,tex,0.3f); st_shot("15_bag_en");
   lang=1; st_wait(ren,tex,0.3f); st_shot("16_bag_cn");
+  /* 13) save/load + mod round-trip self-check (SELFTEST builds only) */
+  printf("== SAVE/MOD CHECK ==\n");
+  coins=1234; xp=77; level=5; day=12; cs_skin=3; bagFill=2; bag[0]=1; bag[1]=9;
+  save_game();
+  coins=0; xp=0; level=1; day=1; cs_skin=0; bagFill=0;
+  load_game();
+  printf("save/load: coins=%d xp=%d level=%d day=%d skin=%d bag=%d (expect 1234 77 5 12 3 2)\n",
+         coins,xp,level,day,cs_skin,bagFill);
+  { FILE*mf=fopen("/tmp/_selftest.mod","w");
+    fprintf(mf,"# test\nfish 0 value=99 exp=7 diff=1\nmult coins=10 xp=7\nshop ROD cost=5\n");
+    fclose(mf);
+    int v0=FISHES[0].value,d0=FISHES[0].diff,cm=modCoinMul,xm=modXpMul,rod=SHOPITEMS[1].cost;
+    mod_load_file("/tmp/_selftest.mod");
+    printf("mod: fish0 value %d->%d | diff %d->%d | mult coins %d->%d xp %d->%d | ROD %d->%d (expect 3->99 0->1 1->10 1->7 30->5)\n",
+           v0,FISHES[0].value,d0,FISHES[0].diff,cm,modCoinMul,xm,modXpMul,rod,SHOPITEMS[1].cost);
+    remove("/tmp/_selftest.mod");
+    FILE*spr=fopen("/tmp/_selftest_sprite.mod","w");
+    fprintf(spr,"sprite 0\n");
+    for(int r=0;r<64;r++){ for(int c=0;c<64;c++) fputc(r==0?'1':'.',spr); fputc('\n',spr); }
+    fclose(spr);
+    unsigned char b0=fsp_pix[0][0];
+    mod_load_file("/tmp/_selftest_sprite.mod");
+    printf("sprite: fsp_pix[0][0] %d->%d | fsp_pix[0][64]=%d (expect ->1 .. 255)\n",
+           b0,fsp_pix[0][0],(int)fsp_pix[0][64]);
+    remove("/tmp/_selftest_sprite.mod");
+    /* restore defaults (mods are re-applied on every real launch, not persisted) */
+    coins=1234; xp=77; level=5; day=12; cs_skin=3;
+  }
   printf("SELFTEST DONE\n");
   (void)win;
 }
@@ -1289,7 +2073,9 @@ int main(int argc,char*argv[]){
   SDL_Texture*tex=SDL_CreateTexture(ren,SDL_PIXELFORMAT_ARGB8888,SDL_TEXTUREACCESS_STREAMING,PH_W,PH_H);
   for(int i=0;i<NPAL;i++)PACKED[i]=SDL_MapRGBA(screen->format,PALRGB[i].r,PALRGB[i].g,PALRGB[i].b,255);
   prep_cg();
+  prep_fishspr();
   seed_rng((unsigned)SDL_GetTicks()^((unsigned)time(NULL)<<8));
+  ambient_init();
   shop_links();
   state=ST_TITLE;menuSel=0;slide=-1;introT=0;lang=0;
 #ifdef SELFTEST
@@ -1298,6 +2084,9 @@ int main(int argc,char*argv[]){
   SDL_DestroyRenderer(ren);SDL_DestroyWindow(win);SDL_Quit();
   return 0;
 #endif
+
+  load_game();
+  mod_scan_and_load();
 
   int running=1;Uint32 tprev=SDL_GetTicks();
   while(running){
@@ -1308,6 +2097,17 @@ int main(int argc,char*argv[]){
     while(SDL_PollEvent(&ev)){
       if(ev.type==SDL_QUIT)running=0;
       else if(ev.type==SDL_KEYDOWN){
+        if(state==ST_LANMENU&&lanEdit){
+          SDL_Scancode sc=ev.key.keysym.scancode;
+          SDL_Keycode sy=ev.key.keysym.sym;
+          if(sc==SDL_SCANCODE_ESCAPE) lanEdit=0;
+          else if(sc==SDL_SCANCODE_RETURN||sc==SDL_SCANCODE_KP_ENTER||sc==SDL_SCANCODE_SPACE){
+            if(joinBuf[0]&&net_start_join(joinBuf)){ state=ST_PLAY; phase=PH_IDLE; phaseT=0; } }
+          else if(sc==SDL_SCANCODE_BACKSPACE){ int l=(int)strlen(joinBuf); if(l>0)joinBuf[l-1]=0; }
+          else if(sy>=SDLK_0&&sy<=SDLK_9){ if(strlen(joinBuf)<15){ int c=sy; char s[2]={(char)c,0}; strcat(joinBuf,s);} }
+          else if(sy==SDLK_PERIOD||sy==SDLK_KP_PERIOD){ if(strlen(joinBuf)<15)strcat(joinBuf,"."); }
+          break; /* consume */
+        }
         switch(ev.key.keysym.scancode){
           case SDL_SCANCODE_SPACE: case SDL_SCANCODE_RETURN: press.space=1;press.accept=1;break;
           case SDL_SCANCODE_ESCAPE: press.back=1;break;
@@ -1315,6 +2115,7 @@ int main(int argc,char*argv[]){
           case SDL_SCANCODE_S: case SDL_SCANCODE_DOWN: press.down=1;break;
           case SDL_SCANCODE_E: press.e=1;break;
           case SDL_SCANCODE_B: press.b=1;break;
+          case SDL_SCANCODE_M: if(state==ST_TITLE) lan_menu_open(); break;
           case SDL_SCANCODE_1: if(state==ST_TITLE)lang=0;break;
           case SDL_SCANCODE_2: if(state==ST_TITLE)lang=1;break;
           case SDL_SCANCODE_LEFT: press.left=1;break;
@@ -1335,15 +2136,30 @@ int main(int argc,char*argv[]){
     draw_top();
     SDL_UnlockSurface(screen);
     SDL_UpdateTexture(tex,NULL,screen->pixels,screen->pitch);
+    /* ---- screen adaptation: crisp integer-scale letterbox ----
+       1) big ~16:9 window (>=1080p): fill whole window (1:1 at 1920x1080,
+          uniform logic-blocks otherwise) - no wasted pixels in fullscreen;
+       2) any other window: integer multiple of the 512x288 logic grid,
+          centered with black bars (never a non-integer blurry scale). */
     int ww,wh;SDL_GetWindowSize(win,&ww,&wh);
-    float sc=(float)(ww<wh?ww/IN_W:wh/IN_H); if(sc<0.5f)sc=0.5f;
-    SDL_Rect dst={(ww-(int)(IN_W*sc))/2,(wh-(int)(IN_H*sc))/2,(int)(IN_W*sc),(int)(IN_H*sc)};
+    SDL_Rect dst;
+    float aspect=(float)ww/(float)wh;
+    if(ww>=PH_W&&wh>=PH_H&&fabsf(aspect-16.0f/9.0f)<0.04f){
+      dst.x=0;dst.y=0;dst.w=ww;dst.h=wh;
+    }else{
+      int k=(int)fminf(ww/(float)IN_W,wh/(float)IN_H);
+      if(k<1)k=1;
+      dst.w=IN_W*k;dst.h=IN_H*k;
+      dst.x=(ww-dst.w)/2;dst.y=(wh-dst.h)/2;
+    }
     SDL_SetRenderDrawColor(ren,0,0,0,255);
     SDL_RenderClear(ren);
     SDL_RenderCopy(ren,tex,NULL,&dst);
     SDL_RenderPresent(ren);
     int wait=(int)(FRAME_MS-(int)(SDL_GetTicks()-tnow)); if(wait>0)SDL_Delay((Uint32)wait);
   }
+  save_game();
+  net_close();
   if(tex)SDL_DestroyTexture(tex);
   SDL_FreeSurface(screen);SDL_DestroyRenderer(ren);SDL_DestroyWindow(win);SDL_Quit();
   return 0;
