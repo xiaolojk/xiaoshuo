@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>PixelLakeHeart 游戏截屏</title>
+<style>
+  body{background:#101420;color:#dce3f0;font-family:system-ui,"Microsoft YaHei",sans-serif;margin:0;padding:24px}
+  h1{font-size:22px;margin:0 0 4px}
+  .sub{color:#8fa0b8;font-size:13px;margin-bottom:20px}
+  h2{font-size:15px;color:#7fd4a0;border-left:3px solid #7fd4a0;padding-left:8px;margin:28px 0 10px}
+  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+  .card{background:#0a0d16;border:1px solid #2a3550;border-radius:8px;overflow:hidden}
+  .card img{width:100%;display:block;image-rendering:pixelated}
+  .cap{padding:8px 12px;font-size:13px;color:#b8c4d8}
+  .cap b{color:#fff}
+  .night{border:1px solid #c9a227}
+  .tag{display:inline-block;background:#1c2f4a;border-radius:4px;padding:1px 7px;font-size:11px;color:#9db8e0;margin-left:6px}
+  .night .tag{background:#3a3014;color:#e8c55a}
+</style>
+</head>
+<body>
+<h1>PixelLakeHeart — 游戏实时截屏</h1>
+<div class="sub">游戏引擎实际渲染输出（1536×864 逻辑 512×288 三倍放大）· 含本次「场景提亮 + 真字体内嵌」改动效果</div>
+
+<h2>主场景 · 昼夜（重点看：夜晚已提亮，不再黑漆漆）</h2>
+<div class="grid">
+  <div class="card"><img src="shots/04_play_day.jpg"><div class="cap"><b>白天 · 湖边码头</b><span class="tag">timeH=14</span></div></div>
+  <div class="card night"><img src="shots/05_play_night.jpg"><div class="cap"><b>夜晚 · 提亮后</b><span class="tag">夜间亮度 22→45</span></div></div>
+  <div class="card"><img src="shots/04b_play_dawn.jpg"><div class="cap"><b>黎明</b><span class="tag">timeH=6.5</span></div></div>
+  <div class="card"><img src="shots/04c_play_dusk.jpg"><div class="cap"><b>黄昏</b><span class="tag">timeH=17.5</span></div></div>
+</div>
+
+<h2>钓鱼流程</h2>
+<div class="grid">
+  <div class="card"><img src="shots/06_casting.jpg"><div class="cap"><b>抛竿</b> 鱼线飞行中</div></div>
+  <div class="card"><img src="shots/07_waiting.jpg"><div class="cap"><b>等待咬钩</b> 鱼正在接近浮标</div></div>
+  <div class="card"><img src="shots/08_nibble.jpg"><div class="cap"><b>咬钩！</b> 浮标抖动，快收杆</div></div>
+  <div class="card"><img src="shots/09_catch.jpg"><div class="cap"><b>渔获展示</b> 64×64 像素鱼 + 英文</div></div>
+  <div class="card"><img src="shots/10_catch_cn.jpg"><div class="cap"><b>渔获（中文）</b> 真字体渲染（非点阵）</div></div>
+  <div class="card"><img src="shots/11a_reel_easy.jpg"><div class="cap"><b>收线 · 小鱼</b> 绿区大，容易命中</div></div>
+  <div class="card"><img src="shots/11b_reel_hard.jpg"><div class="cap"><b>收线 · 湖龙Boss</b> 绿区极小</div></div>
+  <div class="card"><img src="shots/12_walk.jpg"><div class="cap"><b>行走动画</b></div></div>
+</div>
+
+<h2>标题 / 捏脸 / 序章</h2>
+<div class="grid">
+  <div class="card"><img src="shots/02_title_cn.jpg"><div class="cap"><b>中文标题</b> Noto 真字体内嵌渲染</div></div>
+  <div class="card"><img src="shots/03b_custom_cn.jpg"><div class="cap"><b>捏脸 · 中文</b> 皮肤/发型/服装</div></div>
+  <div class="card"><img src="shots/intro_1.jpg"><div class="cap"><b>序章插画 1</b></div></div>
+  <div class="card"><img src="shots/03c_intro0_cn.jpg"><div class="cap"><b>序章 · 中文</b></div></div>
+</div>
+
+<h2>商店 / 背包</h2>
+<div class="grid">
+  <div class="card"><img src="shots/14_shop_cn.jpg"><div class="cap"><b>商店 · 中文</b> 店主 + 商品列表</div></div>
+  <div class="card"><img src="shots/16_bag_cn.jpg"><div class="cap"><b>背包 · 中文</b> 全 10 种鱼图鉴</div></div>
+</div>
+
+<div class="sub" style="margin-top:24px">生成于 SELFTEST 自动化渲染 · 26 张全场景 · 其余（英文版/更多序章）在 shots/ 目录</div>
+</body>
+</html>
