@@ -40,6 +40,8 @@ public class GameClient implements AutoCloseable {
         void onPos(int id, int x, int anim, int score);
         void onChat(int id, String name, String text);
         void onError(String msg);
+        void onKicked();
+        void onFull();
     }
 
     private final Listener listener;
@@ -95,6 +97,10 @@ public class GameClient implements AutoCloseable {
 
     public void sendChat(String text) {
         if (connected()) send(Protocol.C_CHAT, text);
+    }
+
+    public void kick(int targetId) {
+        if (connected()) send(Protocol.C_KICK, String.valueOf(targetId));
     }
 
     public void leave() {
@@ -182,6 +188,8 @@ public class GameClient implements AutoCloseable {
                 String text = f.length > 3 ? f[3] : "";
                 if (listener != null) listener.onChat(id, name, text);
             }
+            case Protocol.S_KICK -> { if (listener != null) listener.onKicked(); }
+            case Protocol.S_FULL -> { if (listener != null) listener.onFull(); }
             default -> { }
         }
     }

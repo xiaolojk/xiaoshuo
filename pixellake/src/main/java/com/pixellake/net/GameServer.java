@@ -91,10 +91,14 @@ public class GameServer implements AutoCloseable {
                 send(from, fromPort, Protocol.S_ANNO, serverName, str(clients.size()), str(Protocol.MAX_PLAYERS));
             }
             case Protocol.C_JOIN -> {
-                if (clients.size() >= Protocol.MAX_PLAYERS) break;
+                ClientInfo existing = clients.get(k);
+                if (existing == null && clients.size() >= Protocol.MAX_PLAYERS) {
+                    send(from, fromPort, Protocol.S_FULL);
+                    break;
+                }
                 String name = f.length > 1 && !f[1].isBlank() ? f[1] : "玩家" + (nextId.get());
                 int skin = f.length > 2 ? Protocol.pint(f[2], 0) : 0;
-                ClientInfo ci = clients.get(k);
+                ClientInfo ci = existing;
                 if (ci == null) {
                     ci = new ClientInfo(from, fromPort);
                     ci.id = nextId.getAndIncrement();
@@ -135,6 +139,20 @@ public class GameServer implements AutoCloseable {
                 String id = ci != null ? str(ci.id) : "?";
                 broadcast(Protocol.S_CHATB, id, name, text);
                 log("<" + name + "> " + text);
+            }
+            case Protocol.C_KICK -> {
+                ClientInfo ci = clients.get(k);
+                if (ci == null || ci.id != 1) break;   // 仅房主(#1)可踢人
+                int target = f.length > 1 ? Protocol.pint(f[1], -1) : -1;
+                for (ClientInfo o : clients.values().toArray(new ClientInfo[0])) {
+                    if (o.id == target) {
+                        send(o.addr, o.port, Protocol.S_KICK);
+                        broadcast(Protocol.S_LEAVE, str(target));
+                        clients.remove(key(o.addr, o.port));
+                        log("踢出 #" + target + " " + o.name);
+                        break;
+                    }
+                }
             }
             default -> { }
         }

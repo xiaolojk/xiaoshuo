@@ -17,6 +17,7 @@ public final class Protocol {
     public static final String C_LEAVE  = "LEAVE";    // 离开
     public static final String C_POS    = "POS";      // 上报：x, anim, score
     public static final String C_CHAT   = "CHAT";     // 聊天：text(可含空格/中文)
+    public static final String C_KICK   = "KICK";     // 房主踢人：目标 id
 
     // 服务端 -> 客户端
     public static final String S_ANNO    = "ANNO";    // 房间公告：name, players, max
@@ -25,6 +26,8 @@ public final class Protocol {
     public static final String S_LEAVE   = "LEAVE";   // 玩家离开：id
     public static final String S_POSB    = "POSB";    // 位置同步：id, x, anim, score
     public static final String S_CHATB   = "CHATB";   // 聊天广播：id, name, text
+    public static final String S_KICK    = "KICKED";  // 你被踢出
+    public static final String S_FULL    = "FULL";    // 房间已满
 
     public static byte[] encode(String... fields) {
         return (String.join(SEP, fields) + "\n").getBytes(StandardCharsets.UTF_8);
