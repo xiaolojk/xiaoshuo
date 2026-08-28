@@ -221,7 +221,7 @@ static void setpix_aa(int x,int y,Uint32 col,int a){
 }
 static int ttf_text_w(const char*s,int scale){
   if(!g_ttf_ok) return -1;
-  float sc=stbtt_ScaleForPixelHeight(&g_ttf,48.0f*scale);
+  float sc=stbtt_ScaleForPixelHeight(&g_ttf,22.0f*scale);
   float pen=0; const unsigned char*p=(const unsigned char*)s;
   while(*p){
     unsigned cp;
@@ -234,7 +234,7 @@ static int ttf_text_w(const char*s,int scale){
 }
 static int ttf_draw_text(int x,int y,const char*s,Uint32 col,int scale){
   if(!g_ttf_ok) return 0;
-  float sc=stbtt_ScaleForPixelHeight(&g_ttf,48.0f*scale);
+  float sc=stbtt_ScaleForPixelHeight(&g_ttf,22.0f*scale);
   int asc,desc,lg; stbtt_GetFontVMetrics(&g_ttf,&asc,&desc,&lg);
   int baseline=y*3+(int)(asc*sc);
   float pen=x*3.0f; const unsigned char*p=(const unsigned char*)s;
