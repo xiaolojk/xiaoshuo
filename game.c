@@ -213,13 +213,15 @@ typedef struct{
   const char*en; const char*cn; int value,exp,weight,region,time,diff;
 }FISH;
 static FISH FISHES[10]={
- /*en            cn       val exp wt reg t dif  (night fishing banned: all t=0/1)*/
- {"CARP","鲤鱼",    3,1,52,0,0,0},
- {"PERCH","鲈鱼",   5,1,46,0,0,0},
- {"SILVER CARP","银鲤",9,2,34,1,0,1},
- {"CATFISH","鲶鱼",12,2,28,1,0,1},
- {"LARGEMOUTH","大口鲈",14,2,26,1,1,2},
- {"BLUEGILL","蓝鳃鱼",22,3,16,1,1,2},
+ /*en            cn       val exp wt reg t dif  (night fishing banned: all t=0/1)
+   shore pool = CARP+PERCH+SILVER CARP+BLUEGILL(day) so the first casts already
+   show 4 species -- before this shore had ONLY carp+perch (100% "all perch"). */
+ {"CARP","鲤鱼",    3,1,26,0,0,0},
+ {"PERCH","鲈鱼",   5,1,26,0,0,0},
+ {"SILVER CARP","银鲤",9,2,14,0,0,1},
+ {"CATFISH","鲶鱼",12,2,24,1,0,1},
+ {"LARGEMOUTH","大口鲈",14,2,22,1,1,2},
+ {"BLUEGILL","蓝鳃鱼",22,3,12,0,1,2},
  {"SALMON","鲑鱼", 30,4,18,2,0,3},
  {"GOLD TROUT","金鳟",40,4,12,2,1,3},
  {"ELECTRIC EEL","电鳗",55,5,9,2,0,4},
@@ -452,7 +454,8 @@ static void render_fish_mode(int sp,int mode,int flip){
   for(int y=0;y<64;y++)for(int x=0;x<64;x++){
     int sx=flip?63-x:x;
     unsigned char p=fsp_pix[sp][y*64+sx];
-    fsp[y*64+x]=(p==FISHSPR_TRANSP)?0:fish_mode_col(FSPR_PACK[sp][p],mode);
+    /* FISHSPR_TRANSP(255)=mod系统透明标记; 15=原始精灵背景填充(洋红) */
+    fsp[y*64+x]=(p==FISHSPR_TRANSP||p==15)?0:fish_mode_col(FSPR_PACK[sp][p],mode);
   }
 }
 static void render_fish(int sp,int dim){ render_fish_mode(sp,dim?1:0,0); }
@@ -1296,7 +1299,7 @@ static void draw_tree(int x,int ground,int night){
 static void draw_sky(void){
   int night=is_night();
   Uint32 skytop,skybot;
-  if(night){ skytop=packrgb(6,10,30); skybot=packrgb(26,38,78); }
+  if(night){ skytop=packrgb(34,44,76); skybot=packrgb(64,86,132); }
   else if(timeH<8){ /* dawn: peach horizon */
     skytop=packrgb(64,110,168); skybot=packrgb(246,178,120);
   } else if(timeH>=17){ /* dusk: violet-orange */
@@ -1376,7 +1379,7 @@ static void draw_sky(void){
 static void draw_water(void){
   int night=is_night();
   Uint32 topc,botc;
-  if(night){ topc=packrgb(22,40,86); botc=packrgb(8,14,40); }
+  if(night){ topc=packrgb(46,72,128); botc=packrgb(16,30,70); }
   else if(timeH<8){ topc=packrgb(214,150,120); botc=packrgb(40,70,120); }
   else if(timeH>=17){ topc=packrgb(190,100,100); botc=packrgb(30,44,90); }
   else { topc=packrgb(84,176,220); botc=packrgb(20,84,150); }
@@ -2305,7 +2308,7 @@ static void update_top(float dt){
   }
 }
 static void draw_top(void){
-  g_nightlift=is_night()?22:0;   /* night keeps MC texels crisp instead of crushing to black */
+  g_nightlift=is_night()?45:0;   /* brighter night so scene is never muddy/dark */
   switch(state){
     case ST_TITLE: draw_title(); break;
     case ST_CUSTOM: draw_custom(); break;
