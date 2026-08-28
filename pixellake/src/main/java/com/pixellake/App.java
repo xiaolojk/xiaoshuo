@@ -469,12 +469,12 @@ public final class App implements GameClient.Listener {
 
     // ---- 场景绘制 ----
     private void renderSkyWater(Screen s) {
-        // 天空渐变（昼夜）
+        // 天空渐变（昼夜），整体提亮
         int h = (int)(gameClock / 60) % 24 + 6;
         int skyTop, skyBot, waterC;
-        if (h >= 6 && h < 18) { skyTop = Colors.rgb(120,190,235); skyBot = Colors.rgb(180,220,240); waterC = Colors.WATER; }
-        else if (h >= 18 && h < 21) { skyTop = Colors.rgb(200,120,72); skyBot = Colors.rgb(240,180,120); waterC = Colors.WATER_DARK; }
-        else { skyTop = Colors.rgb(26,36,80); skyBot = Colors.rgb(40,60,110); waterC = Colors.WATER_DARK; }
+        if (h >= 6 && h < 18) { skyTop = Colors.rgb(145,205,245); skyBot = Colors.rgb(218,240,250); waterC = Colors.WATER; }
+        else if (h >= 18 && h < 21) { skyTop = Colors.rgb(240,160,95); skyBot = Colors.rgb(250,210,155); waterC = Colors.WATER; }
+        else { skyTop = Colors.rgb(100,130,195); skyBot = Colors.rgb(140,175,225); waterC = Colors.WATER; }
 
         for (int y = 0; y < 190; y++) {
             int c = Colors.lerp(skyTop, skyBot, y / 190f);
@@ -482,12 +482,12 @@ public final class App implements GameClient.Listener {
         }
         // 水面（带波纹）
         for (int y = 190; y < Screen.LH; y++) {
-            int c = Colors.lerp(waterC, Colors.WATER_DARK, (y - 190) / 80f);
+            int c = Colors.lerp(waterC, Colors.WATER, (y - 190) / 80f);
             s.rect(0, y, Screen.LW, 1, c);
         }
         for (int x = 0; x < Screen.LW; x += 16) {
             int ry = 195 + ((x / 8) % 3) * 4;
-            s.set(x, ry, Colors.rgb(90,170,220));
+            s.set(x, ry, Colors.rgb(158,215,252));
         }
     }
 

@@ -5,7 +5,7 @@ public final class Colors {
     private Colors() {}
 
     public static final int BLACK   = 0xFF000000;
-    public static final int DARK    = 0xFF12141E;
+    public static final int DARK    = 0xFF20263A;
     public static final int WHITE   = 0xFFFFFFFF;
     public static final int GRAY    = 0xFF9AA0AA;
     public static final int SILVER  = 0xFFA8B0BE;
@@ -19,11 +19,11 @@ public final class Colors {
     public static final int PURPLE  = 0xFFB080E0;
 
     // 场景色
-    public static final int SKY_DAY    = 0xFF6FB9E8;
-    public static final int SKY_DUSK   = 0xFFC87848;
-    public static final int SKY_NIGHT  = 0xFF1A2450;
-    public static final int WATER      = 0xFF2E6FB0;
-    public static final int WATER_DARK = 0xFF1E4E80;
+    public static final int SKY_DAY    = 0xFF8FD0F5;
+    public static final int SKY_DUSK   = 0xFFE8A868;
+    public static final int SKY_NIGHT  = 0xFF3A4C80;
+    public static final int WATER      = 0xFF4A99D6;
+    public static final int WATER_DARK = 0xFF3A76B8;
     public static final int GRASS      = 0xFF4E9A3C;
     public static final int GRASS_DARK = 0xFF35742A;
     public static final int SAND       = 0xFFD8C07A;

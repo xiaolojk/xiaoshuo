@@ -6,14 +6,13 @@ import java.awt.FontMetrics;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
-import java.io.File;
 import java.util.HashMap;
 import java.util.Map;
 
 /**
- * 字体缓存：中/英/繁三套字体，按码点路由（与 C 版 ttf_font_for 逻辑一致）。
- * 优先加载发行版字体包 fonts/{en,zhong,trad}.ttf；缺失时回退到系统逻辑字体，
- * 保证游戏永不因缺字体而崩溃。
+ * 字体缓存：直接使用系统逻辑字体（SANS_SERIF）渲染中/英/繁文字，
+ * 不再依赖发行版像素字体包。文字直接"镶"进游戏画面，永不缺字体。
+ * 繁体字形按码点区分（兼/异体区间），其余统一走系统字体。
  */
 public final class FontCache {
     /** 字符逻辑像素高度。 */
@@ -34,30 +33,14 @@ public final class FontCache {
     public static synchronized void load() {
         faces = new Font[3];
         avail = new boolean[3];
-        Font fallback = new Font(Font.SANS_SERIF, Font.PLAIN, H);
-        tryLoad(EN,   new String[]{"fonts/en.ttf",     "./fonts/en.ttf",     "fonts/zhong.ttf", "./fonts/zhong.ttf"}, fallback);
-        tryLoad(ZH,   new String[]{"fonts/zhong.ttf",  "./fonts/zhong.ttf"}, fallback);
-        tryLoad(TRAD, new String[]{"fonts/trad.ttf",   "./fonts/trad.ttf",   "fonts/zhong.ttf", "./fonts/zhong.ttf"}, fallback);
-        for (int i = 0; i < 3; i++) if (faces[i] == null) { faces[i] = fallback; avail[i] = false; }
+        // 直接使用系统逻辑字体，三套路由共用同一字体（系统能覆盖中/英/繁）。
+        Font sys = new Font(Font.SANS_SERIF, Font.PLAIN, H);
+        faces[EN] = sys; faces[ZH] = sys; faces[TRAD] = sys;
+        avail[EN] = avail[ZH] = avail[TRAD] = false;
     }
 
     public static boolean externalFontsLoaded() {
         return avail[ZH] || avail[TRAD] || avail[EN];
-    }
-
-    private static void tryLoad(int idx, String[] paths, Font fallback) {
-        for (String p : paths) {
-            File f = new File(p);
-            if (!f.exists()) continue;
-            try {
-                Font ff = Font.createFont(Font.TRUETYPE_FONT, f).deriveFont(Font.PLAIN, H);
-                faces[idx] = ff;
-                avail[idx] = true;
-                return;
-            } catch (Exception ignore) { /* 尝试下一个 */ }
-        }
-        faces[idx] = fallback;
-        avail[idx] = false;
     }
 
     public static Font fontFor(int cp) {
