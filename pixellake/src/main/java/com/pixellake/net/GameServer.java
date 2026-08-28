@@ -42,8 +42,9 @@ public class GameServer implements AutoCloseable {
     private final AtomicInteger nextId = new AtomicInteger(1);
     private volatile boolean running = true;
     private final Thread thread;
-    private final boolean verbose;
-    private final String serverName;
+            private final Thread cleanupThread;
+            private final boolean verbose;
+            private final String serverName;
 
     public GameServer(int port, String serverName, boolean verbose) throws Exception {
         this.serverName = (serverName == null || serverName.trim().isEmpty()) ? "PixelLakeHeart" : serverName.trim();
@@ -51,15 +52,32 @@ public class GameServer implements AutoCloseable {
         this.socket = new DatagramSocket(port);
         this.socket.setBroadcast(true);
         this.thread = new Thread(this::run, "pixellake-server");
-        this.thread.setDaemon(true);
-    }
+                this.thread.setDaemon(true);
+                this.cleanupThread = new Thread(this::cleanupLoop, "pixellake-cleanup");
+                this.cleanupThread.setDaemon(true);
+            }
 
-    public void start() { thread.start(); }
+            public void start() { thread.start(); cleanupThread.start(); }
 
     public int port() { return socket.getLocalPort(); }
     public int online() { return clients.size(); }
 
     private void log(String s) { if (verbose) System.out.println("[srv] " + s); }
+
+            /** 定时清理：掉线(超时未上报)的客户端自动移除并广播，防止占位。 */
+            private void cleanupLoop() {
+                while (running) {
+                    try { Thread.sleep(5000); } catch (InterruptedException e) { break; }
+                    long now = System.currentTimeMillis();
+                    for (ClientInfo ci : clients.values().toArray(new ClientInfo[0])) {
+                        if (now - ci.lastSeen > 12000) {
+                            clients.remove(key(ci.addr, ci.port));
+                            broadcast(Protocol.S_LEAVE, str(ci.id));
+                            log("超时移除 #" + ci.id + " " + ci.name + "  在线 " + clients.size() + "/" + Protocol.MAX_PLAYERS);
+                        }
+                    }
+                }
+            }
 
     private void run() {
         byte[] buf = new byte[8192];
@@ -185,7 +203,25 @@ public class GameServer implements AutoCloseable {
 
     static String str(int v) { return String.valueOf(v); }
 
-    // --- 独立运行入口 ---
+            /** 列出本机 IPv4（供客户端按 I 直接输 IP 加入）。 */
+            private static void printLocalIps() {
+                try {
+                    java.util.Enumeration<java.net.NetworkInterface> ifs = java.net.NetworkInterface.getNetworkInterfaces();
+                    System.out.println("  本机局域网 IP（客户端按 I 输入其中一个即可加入）:");
+                    while (ifs.hasMoreElements()) {
+                        java.net.NetworkInterface ni = ifs.nextElement();
+                        if (!ni.isUp() || ni.isLoopback()) continue;
+                        java.util.Enumeration<java.net.InetAddress> addrs = ni.getInetAddresses();
+                        while (addrs.hasMoreElements()) {
+                            java.net.InetAddress a = addrs.nextElement();
+                            if (a instanceof java.net.Inet4Address)
+                                System.out.println("    " + a.getHostAddress());
+                        }
+                    }
+                } catch (Exception ignore) { }
+            }
+
+            // --- 独立运行入口 ---
     public static void main(String[] args) throws Exception {
         int port = Protocol.PORT;
         String name = "PixelLakeHeart";
@@ -196,7 +232,8 @@ public class GameServer implements AutoCloseable {
         System.out.println("PixelLakeHeart 联机服务器已启动");
         System.out.println("  监听端口: " + srv.port());
         System.out.println("  房间名:   " + name);
-        System.out.println("  按 Ctrl+C 停止。");
+                printLocalIps();
+                System.out.println("  按 Ctrl+C 停止。");
         // 阻塞主线程不让进程退出
         Thread.currentThread().join();
     }
