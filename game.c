@@ -723,7 +723,7 @@ static int playerX=120; static int spot=0; static int plannedFish=-1;
 static float castT,phaseT,bobX,bobY,nibbleDelay;
 static float reelInd,reelTarget,reelZoneW,reelVel; static int reelGood,reelNeed,reelBad;
 static int coins=8,xp=0,level=1,caughtToday=0,day=1;
-static float timeH=7.0f;
+static float timeH=14.0f;
 static int rodLevel=0,lureLevel=0,boat=0,netLevel=0;
 static int bagFill=0,bag[64]; static int caughtCount[NFISH];
 static float toastT=-1; static char toast[48];
@@ -1395,12 +1395,12 @@ static void draw_tree(int x,int ground,int night){
 static void draw_sky(void){
   int night=is_night();
   Uint32 skytop,skybot;
-  if(night){ skytop=packrgb(34,44,76); skybot=packrgb(64,86,132); }
-  else if(timeH<8){ /* dawn: peach horizon */
-    skytop=packrgb(64,110,168); skybot=packrgb(246,178,120);
-  } else if(timeH>=17){ /* dusk: violet-orange */
-    skytop=packrgb(72,52,112); skybot=packrgb(236,120,86);
-  } else { skytop=packrgb(84,158,222); skybot=packrgb(168,224,238); }
+  if(night){ skytop=packrgb(42,54,92); skybot=packrgb(74,100,150); }
+  else if(timeH<8){ /* dawn: warm, bright sunrise */
+    skytop=packrgb(88,142,198); skybot=packrgb(252,206,152);
+  } else if(timeH>=17){ /* dusk: warm sunset */
+    skytop=packrgb(96,68,142); skybot=packrgb(250,156,116);
+  } else { skytop=packrgb(120,198,246); skybot=packrgb(238,250,250); }
   fill_grad(0,0,IN_W,150,skytop,skybot);
   grad_noise(0,0,IN_W,150,3,11);   /* per-pixel sky dither, no flat bands */
   dither_rect(0,0,IN_W,150,19,6,13); /* faint horizontal weave -> depth strata */
@@ -1412,32 +1412,57 @@ static void draw_sky(void){
         setpix(STARS[i][0],STARS[i][1],(i%3)?PACKED[C_WHITE]:packrgb(200,210,255));
       if(i%7==0) setpix(STARS[i][0]+1,STARS[i][1]+1,packrgb(120,130,180));
     }
-    /* moon: blocky voxel disc + crescent bite + craters */
+    /* moon: soft round disc + faint craters (no dark "bite" square) */
     float nf=(timeH>=19)?(timeH-19.0f)/10.0f:((timeH+5.0f)/10.0f);
     int mx=(int)(50+nf*(IN_W-110)), my=44;
-    fill(mx-5,my-5,11,11,packrgb(228,232,242));
-    fill(mx-3,my-6,7,13,packrgb(228,232,242));
-    fill(mx-6,my-3,13,7,packrgb(228,232,242));
-    fill(mx-4,my-4,8,8,packrgb(246,248,252));
-    fill(mx-3,my-3,6,6,mulc(skytop,190)); /* crescent bite */
-    fill(mx+3,my-5,3,3,packrgb(190,196,210)); /* craters */
-    fill(mx-2,my+2,2,2,packrgb(190,196,210));
-    grad_noise(mx-6,my-6,13,13,2,77);     /* per-pixel moon surface */
+    /* moon glow: soft cool halo so the night reads as a warm highlight, not a cutout */
+    for(int dy=-26;dy<=26;dy++){ int yy=my+dy; if(yy<0||yy>=150)continue;
+      for(int dx=-26;dx<=26;dx++){ int xx=mx+dx; if(xx<0||xx>=IN_W)continue;
+        int d2=dx*dx+dy*dy; if(d2>676)continue;
+        float t=(float)d2/676.0f; float a=0.5f*(1.0f-t); a*=a;
+        Uint32 base=scr[M2P(yy)*scrpitch+M2P(xx)];
+        setpix(xx,yy,mix3(base,packrgb(214,224,248),a));
+      } }
+    /* clean round moon: bright centre falling to a softly shaded limb with
+       faint craters -- reads as a light source, never a dark cutout */
+    for(int dy=-9;dy<=9;dy++){ int yy=my+dy; if(yy<0||yy>=150)continue;
+      for(int dx=-9;dx<=9;dx++){ int xx=mx+dx; if(xx<0||xx>=IN_W)continue;
+        int d2=dx*dx+dy*dy; if(d2>81)continue;
+        float t=(float)d2/81.0f;
+        setpix(xx,yy,mix3(packrgb(196,206,224),packrgb(238,242,250),1.0f-t));
+      } }
+    setpix(mx+4,my-2,packrgb(196,204,220));   /* craters */
+    setpix(mx-3,my+4,packrgb(200,208,224));
+    setpix(mx+1,my+3,packrgb(206,214,228));
+    setpix(mx-4,my-3,packrgb(210,216,230));
+    grad_noise(mx-6,my-6,13,13,2,77);         /* per-pixel moon surface */
     sunX=mx; sunY=my;
   } else {
     /* sun arc: rises 6:00, sets 18:00 */
     float dayf=(timeH-6.0f)/12.0f;
     if(dayf<0){dayf=0;} if(dayf>1){dayf=1;}
     int sx=(int)(46+dayf*(IN_W-100));
-    int sy=(int)(96-fabsf(dayf-0.5f)*2*78);
-    Uint32 sc=(timeH<8||timeH>=17)?packrgb(250,150,80):packrgb(255,214,90);
-    /* blocky voxel sun: glow rings + lit cube core + rays */
-    fill(sx-6,sy-6,13,13,mulc(sc,120));
-    fill(sx-4,sy-4,9,9,mulc(sc,170));
-    vox_block(sx-3,sy-3,7,7,sc,18,2,5);
-    noise_fill(sx-1,sy-1,3,3,mix3(sc,packrgb(255,255,240),0.6f),2,9);
-    setpix(sx,sy-8,sc);setpix(sx,sy+8,sc);setpix(sx-8,sy,sc);setpix(sx+8,sy,sc);
-    setpix(sx+1,sy-7,mulc(sc,190));setpix(sx-1,sy-7,mulc(sc,190));
+    int sy=(int)(138.0f-sinf(dayf*3.14159265f)*106.0f); /* high at noon, low at horizon */
+    Uint32 core=packrgb(255,255,255);
+    int warm=(timeH<8||timeH>=17);
+    Uint32 sc=warm?packrgb(255,196,118):packrgb(255,246,176);
+    /* sun: white-hot core -> golden disc -> wide warm bloom (sunrise/sunset disc turns gold) */
+    for(int dy=-72;dy<=72;dy++){
+      int yy=sy+dy; if(yy<0||yy>=150)continue;
+      for(int dx=-72;dx<=72;dx++){
+        int xx=sx+dx; if(xx<0||xx>=IN_W)continue;
+        int d2=dx*dx+dy*dy;
+        if(d2>5184)continue;                     /* radius 72 */
+        float t=(float)d2/5184.0f;
+        float a=1.0f-t; if(a<0)a=0; a*=a;        /* smooth wide falloff */
+        Uint32 goal;
+        if(d2<=48)        goal=core;                          /* bright white core      */
+        else if(d2<=900)  goal=mix3(core,sc,warm?0.52f:0.30f); /* golden disc at sunrise/sunset */
+        else              goal=mix3(sc,packrgb(255,224,160),0.60f); /* warm bloom */
+        Uint32 base=scr[M2P(yy)*scrpitch+M2P(xx)];
+        setpix(xx,yy,mix3(base,goal,a));
+      }
+    }
     sunX=sx; sunY=sy;
     /* drifting clouds (3 parallax layers) */
     Uint32 cc=(timeH<8||timeH>=17)?packrgb(250,200,170):packrgb(250,252,255);
@@ -1457,8 +1482,9 @@ static void draw_sky(void){
     }
   }
   /* distant hills: two layered silhouettes */
-  hills(mix3(skybot,packrgb(40,70,90),0.45f),15,22,1.7f);
-  hills(mix3(skybot,packrgb(24,50,66),0.62f),11,13,4.9f);
+  /* warm green vegetated hills (sunlit), not cold blue-grey silhouettes */
+  hills(mix3(skybot,packrgb(108,178,128),0.42f),15,22,1.7f);
+  hills(mix3(skybot,packrgb(76,148,104),0.60f),11,13,4.9f);
   /* haze band at horizon: textured depth strip, never a flat fill */
   for(int y=142;y<150;y++){
     Uint32 hc=mulc(skybot,(150-y)*16+92);
@@ -1475,10 +1501,10 @@ static void draw_sky(void){
 static void draw_water(void){
   int night=is_night();
   Uint32 topc,botc;
-  if(night){ topc=packrgb(46,72,128); botc=packrgb(16,30,70); }
-  else if(timeH<8){ topc=packrgb(214,150,120); botc=packrgb(40,70,120); }
-  else if(timeH>=17){ topc=packrgb(190,100,100); botc=packrgb(30,44,90); }
-  else { topc=packrgb(84,176,220); botc=packrgb(20,84,150); }
+  if(night){ topc=packrgb(58,88,148); botc=packrgb(24,44,96); }
+  else if(timeH<8){ topc=packrgb(240,190,150); botc=packrgb(96,134,168); }
+  else if(timeH>=17){ topc=packrgb(208,124,118); botc=packrgb(48,64,120); }
+  else { topc=packrgb(188,238,252); botc=packrgb(128,208,242); }
   fill_grad(0,150,IN_W,138,topc,botc);
   Uint32 now=SDL_GetTicks();
   /* vertical depth table (surface light -> deep dark) */
@@ -1509,7 +1535,7 @@ static void draw_water(void){
         else     band=(rowin==0)?8:((rowin==3)?-10:cre);
         for(int xx=cx;xx<cx+4&&xx<IN_W;xx++){
           /* multiplicative MC water tone + dither, differs from left texel */
-          int d=mc_texel_pct((int)hash2(xx*5+cy,yy*7+3));
+          int d=mc_texel_pct((int)hash2(xx*5+cy,yy*7+3))/2;  /* gentler ripple: no murky speckle */
           d+=(int)(hash2(xx*3,yy*11+cy)&3)-1;
           setpix(xx,yy,shade_c(texel_c(wcol[yy],d),band));
         }
@@ -1519,14 +1545,14 @@ static void draw_water(void){
         if((hash2(xx,cy)&1)==0) setpix(xx,cy+3,mulc(wcol[cy+3],70));
     }
   }
-  dither_rect(0,150,IN_W,138,7,20,37);   /* sunlit wave crest speckle */
-  dither_rect(0,150,IN_W,138,11,-16,39); /* deep water patches */
+  dither_rect(0,150,IN_W,138,7,22,37);   /* sunlit wave crest speckle */
+  dither_rect(0,150,IN_W,138,9,8,39);    /* faint light patches (no murky dark) */
   /* depth: darkest band only at the very bottom - textured, never a flat fill */
   for(int yy=IN_H-24;yy<IN_H;yy++){
-    Uint32 bc=mulc(botc,140-(yy-(IN_H-24))*3);
+    Uint32 bc=mulc(botc,205-(yy-(IN_H-24))*2);
     int prevd=1000;
     for(int xx=0;xx<IN_W;xx++){
-      int d=mc_texel_pct((int)hash2(xx*5+yy,yy*7+3));
+      int d=mc_texel_pct((int)hash2(xx*5+yy,yy*7+3))/2;
       d+=(int)(hash2(xx*3,yy*11)%3)-1;
       if(d==prevd) d=(d>=0)?d+1:d-1;
       prevd=d;
@@ -1534,7 +1560,7 @@ static void draw_water(void){
     }
   }
   /* shimmer: horizontal light streaks drifting */
-  Uint32 shim=night?packrgb(70,110,190):mix3(topc,packrgb(255,255,255),0.55f);
+  Uint32 shim=night?packrgb(90,140,215):mix3(topc,packrgb(255,255,255),0.82f);
   for(int i=0;i<70;i++){
     int seedx=(i*97+((int)(now/140)))%IN_W;
     int y=153+(i*37)%120;
@@ -1544,11 +1570,14 @@ static void draw_water(void){
   }
   /* sun/moon reflection column (Stardew-style broken light path) */
   {
-    Uint32 rc=night?mulc(packrgb(228,232,242),140):packrgb(255,236,150);
-    for(int y=152;y<230;y+=2){
-      int spread=2+(y-152)/22;
-      int off=((y+(int)(now/190))%5)-2;
-      fill(sunX-spread+off,y,spread*2+1,1,mulc(rc,(y<190)?190:130));
+    Uint32 rc=night?mulc(packrgb(210,224,245),195):packrgb(255,246,190);
+    for(int y=152;y<IN_H;y++){
+      float t=(float)(y-152)/(float)(IN_H-152);
+      int spread=5+(int)(t*24);
+      int off=((y+(int)(now/120))%6)-3;
+      int w=spread+(int)(t*10);
+      Uint32 cc=mix3(rc,packrgb(255,255,255),t*0.55f);
+      fill(sunX-w+off,y,w*2+1,1,mulc(cc,(y<200)?255:225));
     }
   }
 }
