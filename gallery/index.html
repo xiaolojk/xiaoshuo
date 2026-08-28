@@ -20,7 +20,30 @@
 </head>
 <body>
 <h1>PixelLakeHeart — 游戏实时截屏</h1>
-<div class="sub">游戏引擎实际渲染输出（1536×864 逻辑 512×288 三倍放大）· 含本次「场景提亮 + 真字体内嵌」改动效果</div>
+<div class="sub">游戏引擎实际渲染输出（1536×864 逻辑 512×288 三倍放大）· 含本次「场景提亮 + 真字体内嵌 + 鱼类修复」改动效果</div>
+
+<h2>🐛 鱼类修复 · 前后对比（之前每条鱼都渲染成实心色块"全是鲈鱼"）</h2>
+<div class="grid">
+  <div class="card"><img src="old_catch.jpg"><div class="cap"><b style="color:#e06060">修复前 · 渔获画面</b> 鱼是实心色块，看不出鱼种</div></div>
+  <div class="card"><img src="shots/09_catch.jpg"><div class="cap"><b style="color:#60c060">修复后 · 渔获画面</b> 金鳟的鱼形、鳞片、鱼鳍完整显示</div></div>
+  <div class="card"><img src="old_bag.jpg"><div class="cap"><b style="color:#e06060">修复前 · 图鉴</b> 十格全是同色方块</div></div>
+  <div class="card"><img src="shots/16_bag_cn.jpg"><div class="cap"><b style="color:#60c060">修复后 · 图鉴</b> 十种鱼各归各位：鲤鱼/鲈鱼/银鲤/鲶鱼/大口鲈/蓝鳃/鲑鱼/金鳟/电鳗/湖龙</div></div>
+</div>
+
+<h2>🎣 鱼池分布修复 · "怎么全是鲈鱼"的第二个根因</h2>
+<div class="sub">精灵修好后仍"全是鲈鱼"——因为岸边钓点只投放了鲤鱼+鲈鱼两种。现在银鲤、蓝鳃开放到岸边，深水需船，10 种鱼全图可达。</div>
+<div class="grid">
+  <div class="card"><div class="cap" style="text-align:left;line-height:1.7">
+    <b style="color:#e06060">修复前 · 岸边 100% 只有两种鱼</b><br>
+    鲤鱼 53% · 鲈鱼 47%<br>
+    <span style="opacity:.7">码头：6 种 · 深水(无船)：6 种</span>
+  </div></div>
+  <div class="card"><div class="cap" style="text-align:left;line-height:1.7">
+    <b style="color:#60c060">修复后 · 岸边 4 种起步（500 杆实测）</b><br>
+    鲤鱼 35% · 鲈鱼 32% · 银鲤 16% · 蓝鳃 14%<br>
+    <span style="opacity:.7">码头：6 种 · 深水+船：全部 10 种（含湖龙 2%）</span>
+  </div></div>
+</div>
 
 <h2>主场景 · 昼夜（重点看：夜晚已提亮，不再黑漆漆）</h2>
 <div class="grid">
