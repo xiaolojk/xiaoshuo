@@ -38,6 +38,12 @@
 #include "cg_scenes.h"
 #include "fish_sprites.h"
 
+/* vector text: TrueType/OTF anti-aliased font (system-style, no pixel font) */
+#define STB_TRUETYPE_IMPLEMENTATION
+#include "stb_truetype.h"
+extern unsigned char _binary_pfont_otf_start[];
+extern unsigned char _binary_pfont_otf_end[];
+
 #define IN_W 512     /* logic grid (all layout code) */
 #define IN_H 288
 #define PH_W 1536    /* true physical canvas - INTEGER 3x pixel scale */
@@ -177,12 +183,87 @@ static unsigned utf8_cp(const unsigned char*s){
   if((s[0]>>5)==0x6)return((s[0]&0x1F)<<6)|(s[1]&0x3F);
   return((s[0]&0x0F)<<12)|((s[1]&0x3F)<<6)|(s[2]&0x3F);
 }
+/* ================= TrueType vector text (stb_truetype) ================= */
+static stbtt_fontinfo g_ttf;
+static unsigned char* g_ttfdata=NULL;
+static int g_ttf_ok=0, g_ttf_tried=0;
+static void ttf_try_load(void){
+  if(g_ttf_tried) return; g_ttf_tried=1;
+  /* 首选: exe 内嵌字体(单文件交付,无需外部文件) */
+  if(_binary_pfont_otf_start && _binary_pfont_otf_end
+     && _binary_pfont_otf_end>_binary_pfont_otf_start
+     && stbtt_InitFont(&g_ttf,(const unsigned char*)_binary_pfont_otf_start,0)){
+    g_ttf_ok=1; return;
+  }
+  /* 回退: 游戏目录字体文件 */
+  const char* paths[]={"pfont.otf","pixel.ttf","fonts/pixel.ttf","./fonts/pixel.ttf"};
+  for(unsigned i=0;i<sizeof(paths)/sizeof(paths[0]);i++){
+    FILE* f=fopen(paths[i],"rb"); if(!f) continue;
+    fseek(f,0,SEEK_END); long n=ftell(f); fseek(f,0,SEEK_SET);
+    if(n>10000){
+      g_ttfdata=(unsigned char*)malloc((size_t)n);
+      if(g_ttfdata && fread(g_ttfdata,1,(size_t)n,f)==(size_t)n
+         && stbtt_InitFont(&g_ttf,g_ttfdata,0)){ g_ttf_ok=1; fclose(f); return; }
+      free(g_ttfdata); g_ttfdata=NULL;
+    }
+    fclose(f);
+  }
+}
+/* physical-resolution antialiased pixel */
+static void setpix_aa(int x,int y,Uint32 col,int a){
+  if(x<0||x>=PH_W||y<0||y>=PH_H||a<=0) return;
+  Uint32* p=scr+y*scrpitch+x;
+  if(a>=255){*p=col;return;}
+  int r=(col>>16)&255,g=(col>>8)&255,b=col&255;
+  int dr=(*p>>16)&255,dg=(*p>>8)&255,db=*p&255;
+  dr+=((r-dr)*a)>>8; dg+=((g-dg)*a)>>8; db+=((b-db)*a)>>8;
+  *p=(dr<<16)|(dg<<8)|db;
+}
+static int ttf_text_w(const char*s,int scale){
+  if(!g_ttf_ok) return -1;
+  float sc=stbtt_ScaleForPixelHeight(&g_ttf,48.0f*scale);
+  float pen=0; const unsigned char*p=(const unsigned char*)s;
+  while(*p){
+    unsigned cp;
+    if(is_utf8_cjk(*p)){ cp=utf8_cp(p); p+=3; }
+    else{ cp=*p; if(cp>='a'&&cp<='z')cp-=32; p++; }
+    int adv,lsb; stbtt_GetCodepointHMetrics(&g_ttf,stbtt_FindGlyphIndex(&g_ttf,cp),&adv,&lsb);
+    pen+=adv*sc;
+  }
+  return (int)(pen/3.0f+0.5f);
+}
+static int ttf_draw_text(int x,int y,const char*s,Uint32 col,int scale){
+  if(!g_ttf_ok) return 0;
+  float sc=stbtt_ScaleForPixelHeight(&g_ttf,48.0f*scale);
+  int asc,desc,lg; stbtt_GetFontVMetrics(&g_ttf,&asc,&desc,&lg);
+  int baseline=y*3+(int)(asc*sc);
+  float pen=x*3.0f; const unsigned char*p=(const unsigned char*)s;
+  while(*p){
+    unsigned cp;
+    if(is_utf8_cjk(*p)){ cp=utf8_cp(p); p+=3; }
+    else{ cp=*p; if(cp>='a'&&cp<='z')cp-=32; p++; }
+    int w,h,xoff,yoff;
+    unsigned char* bm=stbtt_GetCodepointBitmap(&g_ttf,0,sc,cp,&w,&h,&xoff,&yoff);
+    if(bm){
+      for(int j=0;j<h;j++){ int sy=baseline+yoff+j;
+        for(int i=0;i<w;i++){ int a=bm[j*w+i]; if(a) setpix_aa((int)pen+xoff+i,sy,col,a); } }
+      stbtt_FreeBitmap(bm,NULL);
+    }
+    int adv,lsb; stbtt_GetCodepointHMetrics(&g_ttf,stbtt_FindGlyphIndex(&g_ttf,cp),&adv,&lsb);
+    pen+=adv*sc;
+  }
+  return 1;
+}
 static void draw_text(int x,int y,const char*s,Uint32 col,int scale){
+  ttf_try_load();
+  if(g_ttf_ok){ ttf_draw_text(x,y,s,col,scale); return; }
   while(*s){ unsigned char c=(unsigned char)*s;
     if(is_utf8_cjk(c)){ unsigned cp=utf8_cp((const unsigned char*)s); x+=draw_cjk_char(x,y,cp,col,scale); s+=3; }
     else{ char ch=c; if(ch>='a'&&ch<='z')ch-=32; x+=draw_char(x,y,ch,col,scale); s++; } }
 }
 static int text_w(const char*s,int scale){
+  ttf_try_load();
+  if(g_ttf_ok){ int w=ttf_text_w(s,scale); if(w>=0) return w; }
   int n=0; while(*s){ unsigned char c=(unsigned char)*s;
     if(is_utf8_cjk(c)){ n+=(cjk_find(utf8_cp((const unsigned char*)s))>=0?17:13)*scale; s+=3; }
     else{ char ch=c; if(ch>='a'&&ch<='z')ch-=32; n+=8*scale; s++; } }
