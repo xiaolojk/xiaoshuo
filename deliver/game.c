@@ -525,7 +525,8 @@ static void render_fish_mode(int sp,int mode,int flip){
   for(int y=0;y<64;y++)for(int x=0;x<64;x++){
     int sx=flip?63-x:x;
     unsigned char p=fsp_pix[sp][y*64+sx];
-    fsp[y*64+x]=(p==FISHSPR_TRANSP)?0:fish_mode_col(FSPR_PACK[sp][p],mode);
+    /* FISHSPR_TRANSP(255)=mod系统透明标记; 15=原始精灵背景填充(洋红) */
+    fsp[y*64+x]=(p==FISHSPR_TRANSP||p==15)?0:fish_mode_col(FSPR_PACK[sp][p],mode);
   }
 }
 static void render_fish(int sp,int dim){ render_fish_mode(sp,dim?1:0,0); }
