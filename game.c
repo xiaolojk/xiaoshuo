@@ -1057,15 +1057,16 @@ static void begin_reel(void){
   int d=(plannedFish>=0)?FISHES[plannedFish].diff:0;
   reelDiff=d;
   reelInd=20;
-  reelVel=115.0f+d*46.0f+rodLevel*10.0f;
-  reelNeed=3+d; if(reelNeed+(level/3)>8)reelNeed=8; else reelNeed+=level/3;
+  /* 手感修复: 标记更慢/绿区更宽/需要的命中数砍半, 好竿再加成 */
+  reelVel=85.0f+d*28.0f+rodLevel*8.0f;
+  reelNeed=2+d/2; if(reelNeed+(level/4)>5)reelNeed=5; else reelNeed+=level/4;
   reelGood=0; reelBad=0;
-  reelTol=(d>=3)?2:3;
-  reelZoneW=(float)(86-d*14)+rodLevel*7.0f; if(reelZoneW>100)reelZoneW=100;
+  reelTol=(d>=4)?2:3;
+  reelZoneW=(float)(112-d*12)+rodLevel*8.0f; if(reelZoneW>130)reelZoneW=130;
   zoneBase=40.0f+rndf()*(IN_W-reelZoneW-80.0f);
   zonePh=rndf()*6.2832f;
-  zoneAmp=18.0f+d*20.0f;
-  zoneSpd=0.8f+d*0.8f;
+  zoneAmp=14.0f+d*16.0f;
+  zoneSpd=0.7f+d*0.6f;
   zoneDrift=0;
   zoneJumpT=1.1f+rndf()*1.4f;
   reelTarget=zoneBase;
@@ -1093,8 +1094,8 @@ static void update_reel(float dt){
   if(press.space){
     if(reelInd>=reelTarget&&reelInd<=reelTarget+reelZoneW){
       reelGood++;
-      /* each successful hook makes the fish fight harder */
-      zoneSpd+=0.18f; zoneAmp+=2.5f;
+      /* 每次命中难度只小幅上升(旧版涨太快导致后期必输) */
+      zoneSpd+=0.10f; zoneAmp+=1.5f;
       zoneBase=30.0f+rndf()*(IN_W-reelZoneW-60.0f);
       zonePh=rndf()*6.2832f;
       if(reelGood>=reelNeed){
@@ -1176,11 +1177,21 @@ static void cast_line(void){
 }
 static void update_play(float dt){
   const Uint8*keys=SDL_GetKeyboardState(NULL);
-  int moving=0; int spd=95;
-  if(keys[SDL_SCANCODE_LEFT]){playerX-=(int)(spd*dt);moving=1;}
-  if(keys[SDL_SCANCODE_RIGHT]){playerX+=(int)(spd*dt);moving=1;}
-  playerX=clampij(playerX,20,IN_W-20);
-  timeH+=(dt/420.0f)*24.0f; if(timeH>=24){timeH-=24;day++;caughtToday=0;}
+  int moving=0; int spd=110;
+  /* 方向键 + WASD 都能走 */
+  if(keys[SDL_SCANCODE_LEFT]||keys[SDL_SCANCODE_A]){playerX-=(int)(spd*dt);moving=1;}
+  if(keys[SDL_SCANCODE_RIGHT]||keys[SDL_SCANCODE_D]){playerX+=(int)(spd*dt);moving=1;}
+  /* 深水区需要小船: 码头尽头(x=336)没有船就出不去,给明确提示 */
+  int maxX=boat?(IN_W-24):336;
+  if(playerX>maxX){playerX=maxX;if(!boat&&moving)add_toast(T("BUY A BOAT ($150) TO SAIL DEEP","买小船($150)才能出海去深水"));}
+  playerX=clampij(playerX,20,maxX);
+  /* HUD 位置实时刷新: 旧版只在抛竿时更新 spot, 走路时看不出位置变化 */
+  if(phase==PH_IDLE) spot=(playerX<170)?0:(playerX<340)?1:2;
+  /* 时间: 白天一整个白天约16分钟(旧版3.8分钟太快); 夜晚自动5倍速流逝,
+     空格还能直接睡觉跳到天亮, 不再有干等的死时间 */
+  float rate=(dt/1800.0f)*24.0f;
+  if(is_night())rate*=5.0f;
+  timeH+=rate; if(timeH>=24){timeH-=24;day++;caughtToday=0;}
   pAnimT+=dt;
   ambient_update(dt);
   /* pick anim */
@@ -1191,13 +1202,17 @@ static void update_play(float dt){
 
   if(phase==PH_IDLE){ if(press.space){
       if(!is_night()) cast_line();
-      else add_toast(T("CANNOT FISH AT NIGHT","夜晚不能钓鱼"));
+      else { /* 夜晚: 空格 = 睡觉, 直接天亮 */
+        timeH=6.0f; day++; caughtToday=0;
+        add_toast(T("SLEPT TILL DAWN","一觉睡到天亮"));
+        save_game();
+      }
   } }
   else if(phase==PH_CAST){ castT-=dt; if(castT<=0){phase=PH_WAIT;phaseT=0;pAnim=PA_WAIT;
-      nibbleDelay=2.0f+rndf()*3.5f-rodLevel*0.5f; if(nibbleDelay<1.2f)nibbleDelay=1.2f;} }
+      nibbleDelay=1.2f+rndf()*2.0f-rodLevel*0.3f; if(nibbleDelay<0.7f)nibbleDelay=0.7f;} }
   else if(phase==PH_WAIT){ phaseT+=dt; if(phaseT>=nibbleDelay){phase=PH_NIBBLE;phaseT=0;} }
   else if(phase==PH_NIBBLE){ phaseT+=dt;
-    float win=1.1f+rodLevel*0.25f;
+    float win=1.5f+rodLevel*0.3f;   /* 咬钩窗口 1.1s -> 1.5s+, 手感更从容 */
     if(press.space){begin_reel();return;}
     if(phaseT>=win){phase=PH_MISS;phaseT=0;add_toast(T("TOO SLOW!","太慢了!"));} }
   else if(phase==PH_MISS){ phaseT+=dt; if(phaseT>=1.0f)phase=PH_IDLE; }
@@ -1476,21 +1491,21 @@ static void draw_dock(void){
   setpix(6,147,PACKED[C_PINK]); setpix(7,146,PACKED[C_PINK]); setpix(5,148,mulc(PACKED[C_PINK],150));
   setpix(44,148,PACKED[C_WHITE]); setpix(20,145,PACKED[C_GOLD]); setpix(43,149,mulc(PACKED[C_GOLD],150));
   if(!night){ setpix(48,150,PACKED[C_WHITE]); setpix(12,149,PACKED[C_PINK]); }
-  /* dock: 16 voxel plank BOARDS - every board is its own MC plank cube with a
-     lit top / textured body / shaded bottom, dark seams between boards, grain
-     streaks and nail rows (MC plank blocks) */
-  for(int p=0;p<16;p++){
+  /* dock: 11 块木板铺到 x=352 为止 -- 码头右边是开放湖面(深水区),
+     买了船才能驾船出去, 没船的人走到码头尽头会被拦下 */
+  for(int p=0;p<11;p++){
     int x0=p*32;
     vox_wood(x0,170,32,13,d,night?8:16,p);
     if(p>0) fill(x0,170,1,13,mulc(d,38));   /* board seam */
     for(int xx=x0+8;xx<x0+32;xx+=24) if(hash2(xx,p)%3==0) setpix(xx,171,mulc(d,75)); /* nails */
   }
-  /* railing posts as lit cubes */
-  for(int x=8;x<IN_W;x+=24) vox_cube(x,164,2,6,d2,night?6:12,6,(x>>3)&255);
-  /* water pillars: lit top cap + 4 textured cube columns with left-lit /
-     right-shaded edges - EVERY column keeps its own per-pixel MC texture
-     (the old overdraw flattened the two outer columns into solid bars) */
-  for(int x=-30;x<IN_W;x+=64){
+  /* 码头尽头: 系缆桩 */
+  vox_cube(340,164,4,8,d2,night?6:12,6,77);
+  vox_cube(348,164,4,8,d2,night?6:12,6,78);
+  /* railing posts as lit cubes (only over the dock) */
+  for(int x=8;x<340;x+=24) vox_cube(x,164,2,6,d2,night?6:12,6,(x>>3)&255);
+  /* water pillars: lit top cap + textured cube columns (only under the dock) */
+  for(int x=-30;x<352;x+=64){
     int sx=(x>>4)&255;
     for(int yy=184;yy<IN_H;yy++){
       int prevd=1000;
@@ -1515,12 +1530,29 @@ static void draw_dock(void){
     }
   }
 }
+/* 小船: 上翘船头船尾 + 木板船身; 买了船后停在码头尽头, 走过去就乘船出海 */
+static void draw_boat_hull(int cx,int night){
+  Uint32 hull=PACKED[night?C_TRUNK:C_BROWN];
+  int x0=cx-28;
+  fill(x0+4,163,6,3,PACKED[night?C_DOCK2:C_DOCK2]);  /* 船尾上翘 */
+  fill(x0+46,163,6,3,PACKED[night?C_DOCK2:C_DOCK2]); /* 船头上翘 */
+  fill(x0+6,166,44,4,hull);                          /* 船舷 */
+  fill(x0+8,170,40,5,mulc(hull,172));                /* 船身 */
+  fill(x0+10,175,36,3,mulc(hull,120));               /* 吃水暗边 */
+  fill(x0+6,168,44,1,mulc(hull,208));                /* 甲板亮线 */
+  fill(x0+20,169,16,4,mulc(PACKED[night?C_BROWN:C_DOCK],185)); /* 座板 */
+}
 /* draw player + rod + line + bobber */
 static void draw_player(void){
   int px=playerX-16;
   int sc=2;
   int ox=px, oy=124;
   int hx,hy;
+  /* 有船: 玩家在深水段(x>=340)时乘船, 否则船系在码头尽头 */
+  if(boat){
+    if(playerX>=340) draw_boat_hull(playerX,is_night());
+    else draw_boat_hull(356,is_night());
+  }
   int fishing=(phase==PH_CAST||phase==PH_WAIT||phase==PH_NIBBLE||phase==PH_MISS||phase==PH_CATCHMSG);
   int anim=(state==ST_REEL)?PA_REEL:pAnim;
   draw_person(ox,oy,sc,anim,pAnimT,&hx,&hy);
@@ -1558,6 +1590,13 @@ static void draw_play(void){
   draw_sky(); draw_water();
   draw_ambient();            /* fish are ALWAYS visible cruising the lake */
   draw_dock();
+  /* 区域标牌: 画在码头前沿, 走到哪一眼看清; 深水区没船是红色, 买了船变金色 */
+  { Uint32 g=PACKED[C_GREEN], r=boat?PACKED[C_GOLD]:PACKED[C_RED];
+    fill(164,181,14,3,g); fill(330,181,14,3,r);
+    draw_text(154,187,T("PIER","码头"),g,1);
+    if(boat) draw_text(303,187,T("DEEP:BOAT","深水·乘船"),r,1);
+    else     draw_text(303,187,T("DEEP:NEED BOAT","深水·需船"),r,1);
+  }
   int drawLine=(phase==PH_CAST||phase==PH_WAIT||phase==PH_NIBBLE||phase==PH_MISS||phase==PH_CATCHMSG);
   if(drawLine) draw_player();
   else draw_player();
@@ -1574,7 +1613,7 @@ static void draw_play(void){
   snprintf(b,64,T("SPOT:%s","位置:%s"),spot_name(spot)); draw_text(IN_W-text_w(b,1)-8,20,b,PACKED[C_SILVER],1);
   { const char*bs=T("B:SHOP","B:商店"); draw_text(IN_W-text_w(bs,1)-8,34,bs,PACKED[C_SILVER],1); }
   if(phase==PH_IDLE){
-    if(is_night()) center_text(224,T("NIGHT: NO FISHING - WAIT FOR DAWN","夜晚不能钓鱼 天亮再来"),PACKED[C_WARN],1);
+    if(is_night()) center_text(224,T("NIGHT: SPACE TO SLEEP TILL DAWN","夜晚·按空格睡觉到天亮"),PACKED[C_WARN],1);
     else center_text(224,T("SPACE TO CAST","按空格抛竿"),PACKED[C_WHITE],1);
   }
   if(phase==PH_NIBBLE) center_text(224,T("!!! BITE !!!","!!! 鱼咬钩了 !!!"),PACKED[C_WARN],1);
@@ -2005,7 +2044,8 @@ static void update_shop(void){
   if(press.accept){ MENUITEM*m=&SHOPITEMS[menuSel];
     if(menuSel==0){ if(bagFill>0){int sum=0;for(int i=0;i<bagFill;i++)sum+=FISHES[bag[i]].value;coins+=sum*modCoinMul;bagFill=0;add_toast(T("SOLD","已出售"));save_game();}
       else add_toast(T("NOTHING TO SELL","没有可卖的")); }
-    else if(*m->var<m->maxown){ if(coins>=m->cost){coins-=m->cost;(*m->var)++;add_toast(T("PURCHASED","已购买"));save_game();} else add_toast(T("NOT ENOUGH COINS","金币不足")); }
+    else if(*m->var<m->maxown){ if(coins>=m->cost){coins-=m->cost;(*m->var)++;
+        add_toast(menuSel==4?T("BOAT! WALK RIGHT TO SAIL DEEP","买了船! 向右走出海钓深水鱼"):T("PURCHASED","已购买"));save_game();} else add_toast(T("NOT ENOUGH COINS","金币不足")); }
     else add_toast(T("ALREADY MAX","已是最大")); }
   if(press.back)state=ST_PLAY;
 }
@@ -2159,7 +2199,7 @@ static void draw_lightning_rnd(float t){
 static void update_intro(float dt){
   introT+=dt;
   slide=(int)(introT/SLIDE_T);
-  if(slide>4||press.accept){ add_toast(lang?T("MOVE:ARROWS CAST:SPACE","移动:方向键  抛竿:空格"):T("MOVE:ARROWS CAST:SPACE","移动:方向键  抛竿:空格"));
+  if(slide>4||press.accept){ add_toast(lang?T("MOVE:<->/AD CAST:SPACE NIGHT:SLEEP","移动:←→/AD 抛竿:空格 夜晚:空格睡觉"):T("MOVE:<->/AD CAST:SPACE NIGHT:SLEEP","移动:←→/AD 抛竿:空格 夜晚:空格睡觉"));
     state=ST_PLAY;phase=PH_IDLE;phaseT=0; }
 }
 static void draw_intro(void){
@@ -2379,6 +2419,11 @@ static void selftest(SDL_Window*win,SDL_Renderer*ren,SDL_Texture*tex){
   /* 5) casting arc (mid-cast) */
   timeH=14.0f; phase=PH_CAST; pAnim=PA_CAST; castT=0.25f; bobX=340; bobY=190;
   st_wait(ren,tex,0.1f); st_shot("06_casting");
+  /* 4b) 乘船出海深水区(买了船走到码头尽头) */
+  boat=1; playerX=420; spot=2; phase=PH_IDLE; pAnim=PA_IDLE;
+  st_wait(ren,tex,0.3f); st_shot("17_boat_deep");
+  /* 4c) 没船的人被拦在码头尽头 */
+  boat=0; playerX=330; spot=1; st_wait(ren,tex,0.3f); st_shot("18_no_boat_wall");
   /* 6) waiting: Dave-style fish approaching the bobber */
   phase=PH_WAIT; pAnim=PA_WAIT; phaseT=1.2f; bobX=330; bobY=185;
   plannedFish=6; nibbleDelay=3.0f;
