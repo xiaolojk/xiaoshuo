@@ -648,10 +648,12 @@ static void render_fish(int sp,int dim){
 }
 #endif
 
-/* ---------- CG backdrops (phys-blitted for 1080p speed) ---------- */
-static Uint32 CG_PACK[4][96];
+/* ---------- CG backdrops (phys-blitted for 1080p speed) ----------
+   AI 像素画场景: 0=day 1=dawn 2=dusk 3=night 4=storm 5=title 6=pier 7=rod 8=shop */
+enum{CGS_DAY,CGS_DAWN,CGS_DUSK,CGS_NIGHT,CGS_STORM,CGS_TITLE,CGS_PIER,CGS_ROD,CGS_SHOP};
+static Uint32 CG_PACK[CG_N][CG_NCOL];
 static void prep_cg(void){
-  for(int s=0;s<4;s++)for(int i=0;i<96;i++)
+  for(int s=0;s<CG_N;s++)for(int i=0;i<CG_NCOL;i++)
     CG_PACK[s][i]=packrgb(CG_PAL[s][i][0],CG_PAL[s][i][1],CG_PAL[s][i][2]);
 }
 static void draw_cg_pan(int scene,int xoff){
@@ -1625,8 +1627,15 @@ static void draw_player(void){
     (void)hx;(void)hy;
   }
 }
+/* 按当前时刻挑选 AI 湖景背景图 */
+static int lake_scene_now(void){
+  if(is_night())return CGS_NIGHT;
+  if(timeH<8.0f)return CGS_DAWN;
+  if(timeH>=17.0f)return CGS_DUSK;
+  return CGS_DAY;
+}
 static void draw_play(void){
-  draw_sky(); draw_water();
+  draw_cg_pan(lake_scene_now(),0);   /* AI 像素画湖景(整幅天空+水面) */
   draw_ambient();            /* fish are ALWAYS visible cruising the lake */
   draw_dock();
   int drawLine=(phase==PH_CAST||phase==PH_WAIT||phase==PH_NIBBLE||phase==PH_MISS||phase==PH_CATCHMSG);
@@ -2135,12 +2144,8 @@ static void draw_shopkeeper(int ox,int oy,int sc,float t){
   setpix(ox+13*sc,oy+39*sc,PACKED[C_WHITE]);
 }
 static void draw_shop(void){
-  fill(0,0,IN_W,IN_H,PACKED[C_DIALOG]);
-  /* warm interior backdrop */
-  fill_grad(0,0,IN_W,60,packrgb(90,70,52),packrgb(60,46,36));
-  for(int x=16;x<IN_W-10;x+=48){ /* wall planks */
-    fill(x,10,2,50,mulc(packrgb(70,54,40),160));
-  }
+  draw_cg_pan(CGS_SHOP,0);  /* AI 商店内景 */
+  darkall(70);              /* 压暗保证菜单可读 */
   center_text(8,T("PIER SUPPLIES","码头商店"),PACKED[C_GOLD],2);
   /* shopkeeper + counter on the left */
   float t=(float)SDL_GetTicks()/1000.0f;
@@ -2216,7 +2221,7 @@ static const char* IN_CN[5]={
   "还有最后一个承诺:\"守护这片湖。\"",
   "第1天——你的传奇从此开始"};
 #define SLIDE_T 4.0f
-static int scene_for_slide(int s){ return s<2?0:(s==2?2:(s==3?3:1)); }
+static int scene_for_slide(int s){ return s<2?CGS_STORM:(s==2?CGS_ROD:(s==3?CGS_PIER:CGS_DAWN)); }
 static void draw_rain(float t){
   Uint32 rain2=mulc(PACKED[C_CYAN],110);
   for(int i=0;i<40;i++){ int x=(i*47+(int)(t*90))%IN_W; int y=(i*29+(int)(t*300))%170;
@@ -2237,8 +2242,7 @@ static void draw_intro(void){
   int s=clampij(slide,0,4);
   float prog=introT-s*SLIDE_T;
   int scene=scene_for_slide(s);
-  int xoff=(s<2)?((int)(introT*90)%20):(s==4?((int)(introT*20)%8):0);
-  draw_cg_pan(scene,xoff);
+  draw_cg_pan(scene,0);   /* AI 场景图, 静态整幅 */
   /* fade in + fade out at slide end (film-style transition) */
   float fade=prog/0.6f; if(fade<1) darkall((int)((1-fade)*255));
   float rem=SLIDE_T-prog; if(rem<0.45f) darkall((int)((0.45f-rem)*2.2f*230));
@@ -2294,10 +2298,8 @@ static void update_custom(void){
   if(press.back)state=ST_TITLE;
 }
 static void draw_custom(void){
-  draw_cg_pan(1,(SDL_GetTicks()/80)%IN_W);
-  darkall(110);
-  fill(0,0,IN_W,IN_H,PACKED[C_DIALOG]);
-  darkall(30);
+  draw_cg_pan(CGS_PIER,0); /* AI pier art behind the dialog */
+  darkall(140);            /* 压暗一层保证文字可读, 不遮死画面 */
   center_text(10,T("CREATE YOUR ANGLER","打造你的钓手"),PACKED[C_GOLD],2);
   /* live preview: walking puppet at 4x, mirrored panels */
   int pvx=(IN_W/4)*3-40, pvy=90;
@@ -2338,8 +2340,7 @@ static void draw_custom(void){
   center_text(228,T("ESC BACK TO TITLE","退出返回标题"),PACKED[C_SILVER],1);
 }
 static void draw_title(void){
-  int xoff=((int)(SDL_GetTicks()/40))%IN_W;
-  draw_cg_pan(1,xoff); /* dawn */
+  draw_cg_pan(CGS_TITLE,0); /* AI title art */
   darkall(60);
   draw_text(46,16,T("PIXEL LAKE HEART","像素湖心"),PACKED[C_WHITE],3);
   draw_text(46,56,T("A LOW-END FISHING ADVENTURE","一款低配钓鱼冒险"),PACKED[C_CYAN],1);

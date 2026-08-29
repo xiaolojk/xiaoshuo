@@ -22,6 +22,34 @@
 <h1>PixelLakeHeart — 游戏实时截屏</h1>
 <div class="sub">游戏引擎实际渲染输出（1536×864 逻辑 512×288 三倍放大）· 含本次「场景提亮 + 真字体内嵌 + 鱼类修复」改动效果</div>
 
+<h2>🎨 全画面 AI 重绘（本次改动）</h2>
+<div class="sub">游戏内全部背景图改由 AI 像素画绘制：湖景四时段（水线对齐 y=150）、标题、风暴/鱼竿/码头剧情 CG、商店内景，共 9 张；编译期内嵌（单 exe 交付），不做任何高光/阴影后处理，保持原汁像素感。</div>
+<div class="grid">
+  <div class="card"><img src="shots/old_04_play_day.jpg"><div class="cap"><b style="color:#e06060">旧版 · 白天湖景</b> 程序化体素绘制</div></div>
+  <div class="card"><img src="shots/04_play_day.jpg"><div class="cap"><b style="color:#60c060">新版 · 白天湖景</b> AI 像素画背景 + 码头/角色叠加</div></div>
+  <div class="card"><img src="shots/old_05_play_night.jpg"><div class="cap"><b style="color:#e06060">旧版 · 夜晚</b></div></div>
+  <div class="card night"><img src="shots/05_play_night.jpg"><div class="cap"><b style="color:#60c060">新版 · 夜晚</b><span class="tag">AI 夜景</span></div></div>
+  <div class="card"><img src="shots/old_01_title_en.jpg"><div class="cap"><b style="color:#e06060">旧版 · 标题</b></div></div>
+  <div class="card"><img src="shots/01_title_en.jpg"><div class="cap"><b style="color:#60c060">新版 · 标题</b> AI 标题画</div></div>
+  <div class="card"><img src="shots/old_intro_0.jpg"><div class="cap"><b style="color:#e06060">旧版 · 序章风暴</b></div></div>
+  <div class="card"><img src="shots/intro_0.jpg"><div class="cap"><b style="color:#60c060">新版 · 序章风暴</b> AI 风暴 CG + 雨闪电特效</div></div>
+  <div class="card"><img src="shots/old_13_shop_en.jpg"><div class="cap"><b style="color:#e06060">旧版 · 商店</b></div></div>
+  <div class="card"><img src="shots/13_shop_en.jpg"><div class="cap"><b style="color:#60c060">新版 · 商店</b> AI 内景 + 店主/菜单叠加</div></div>
+</div>
+
+<h2>🖼️ AI 原始像素画（512×288 · 48 色量化 · 编译期内嵌）</h2>
+<div class="grid">
+  <div class="card"><img src="aibg/day.png"><div class="cap"><b>day</b> 白天湖景</div></div>
+  <div class="card"><img src="aibg/dawn.png"><div class="cap"><b>dawn</b> 黎明</div></div>
+  <div class="card"><img src="aibg/dusk.png"><div class="cap"><b>dusk</b> 黄昏</div></div>
+  <div class="card night"><img src="aibg/night.png"><div class="cap"><b>night</b> 夜晚</div></div>
+  <div class="card"><img src="aibg/storm.png"><div class="cap"><b>storm</b> 风暴（序章）</div></div>
+  <div class="card"><img src="aibg/title.png"><div class="cap"><b>title</b> 标题画</div></div>
+  <div class="card"><img src="aibg/pier.png"><div class="cap"><b>pier</b> 码头（捏脸/序章）</div></div>
+  <div class="card"><img src="aibg/rod.png"><div class="cap"><b>rod</b> 旧竹竿（序章 CG）</div></div>
+  <div class="card"><img src="aibg/shop.png"><div class="cap"><b>shop</b> 商店内景</div></div>
+</div>
+
 <h2>🐛 鱼类修复 · 前后对比（之前每条鱼都渲染成实心色块"全是鲈鱼"）</h2>
 <div class="grid">
   <div class="card"><img src="old_catch.jpg"><div class="cap"><b style="color:#e06060">修复前 · 渔获画面</b> 鱼是实心色块，看不出鱼种</div></div>
