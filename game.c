@@ -1076,78 +1076,95 @@ static void Pline(int ox,int oy,int sc,int x0,int y0,int x1,int y1,Uint32 c){
   for(;;){ P(ox,oy,sc,x0,y0,1,1,c); if(x0==x1&&y0==y1)break; int e2=2*er; if(e2>=dy){er+=dy;x0+=sx;} if(e2<=dx){er+=dx;y0+=sy;} }
 }
 /* draw puppet (customizable appearance); returns rod grip via hx,hy
-   16-bit 日式像素小人: 戴草帽的钓手, 侧视朝右, 大头小身, 干净色块 */
+   16-bit 日式像素钓手 (16x24 网格, 侧视朝右): 草帽 + 橙围巾 + 夹克。
+   走路双腿摆动/围巾飘, 待机呼吸眨眼, 钓鱼双臂抬向握把 —— 任何姿势
+   都给出握竿点, 让钓竿全程握在手里 */
 static void draw_person(int ox,int oy,int sc,int anim,float t,int* hx,int* hy){
   Uint32 skin=skin_c(),hair=hair_c(),shirt=shirt_c(),pants=pants_c(),
         boot=PACKED[C_BOOT],dark=PACKED[C_DARK],
-        straw=packrgb(238,200,110),straw2=shade_c(straw,-38),
-        vest=packrgb(216,124,66),vest2=mulc(packrgb(216,124,66),168);
+        straw=packrgb(236,196,104),straw_d=mulc(straw,178),straw_l=shade_c(straw,22),
+        scarf=packrgb(226,124,64),scarf_d=mulc(packrgb(226,124,64),176);
   float ph=t*6.0f;
   int bob=0,lig=0,rig=0;
   if(anim==PA_WALK){
     float s1=sinf(ph),s2=sinf(ph+3.14159f);
     lig=(int)(s1*2); rig=(int)(s2*2); bob=(int)(fabsf(sinf(ph)));
-  } else if(anim==PA_IDLE){
-    bob=(((int)(t*2))&1);
-  } else if(anim==PA_REEL){
-    float s1=sinf(ph*2);
-    bob=(s1>0)?1:0;
-  }
+  } else if(anim==PA_IDLE){ bob=(((int)(t*2))&1); }
+  else if(anim==PA_REEL){ bob=(sinf(ph*2)>0)?1:0; }
   int b=bob;
-  /* legs + boots */
-  P(ox,oy,sc, 5+lig,16,3,3,pants);
-  P(ox,oy,sc, 9+rig,16,3,3,pants);
-  P(ox,oy,sc, 4+lig,19,4,2,boot);
-  P(ox,oy,sc, 9+rig,19,4,2,boot);
-  /* torso: shirt + 橙色钓鱼马甲 */
-  P(ox,oy,sc, 4,10+b,9,6,shirt);
-  P(ox,oy,sc, 5,10+b,8,6,vest);
-  P(ox,oy,sc, 6,12+b,2,2,vest2);   /* chest pockets */
-  P(ox,oy,sc, 9,12+b,2,2,vest2);
-  /* head */
-  P(ox,oy,sc, 4,2+b,9,8,skin);
-  P(ox,oy,sc, 4,3+b,1,2,mulc(skin,185));  /* ear */
-  /* ---- hair styles (drawn under straw hat) ---- */
-  if(cs_hair==1){ /* long hair: crown + sides down past torso */
-    P(ox,oy,sc, 4,2+b,9,2,hair);
-    P(ox,oy,sc, 3,3+b,1,8,hair); P(ox,oy,sc, 12,3+b,1,8,hair);
-    P(ox,oy,sc, 3,11+b,1,3,hair);
-  } else if(cs_hair==2){ /* ponytail: crown + back tail swinging */
-    P(ox,oy,sc, 4,2+b,9,2,hair);
-    P(ox,oy,sc, 3,3+b,1,4,hair);
-    int sw=(anim==PA_WALK)?(int)(sinf(ph)*1):0;
-    P(ox,oy,sc, 2+sw,6+b,1,5,hair);
-  } else if(cs_hair==3){ /* bald - headband */
-    P(ox,oy,sc, 4,2+b,9,1,PACKED[C_WARN]);
-  } else { /* short hair: crown + short sides */
-    P(ox,oy,sc, 4,2+b,9,2,hair);
-    P(ox,oy,sc, 4,4+b,1,2,hair);
+  /* ---- 腿 + 靴 (走路前后摆) ---- */
+  P(ox,oy,sc, 4+lig,19,4,3,pants);
+  P(ox,oy,sc, 8+rig,19,4,3,pants);
+  P(ox,oy,sc, 4+lig,21,5,2,boot);
+  P(ox,oy,sc, 8+rig,21,5,2,boot);
+  P(ox,oy,sc, 4+lig,22,5,1,mulc(boot,158));   /* 鞋底暗线 */
+  P(ox,oy,sc, 8+rig,22,5,1,mulc(boot,158));
+  /* ---- 围巾 + 飘动的围巾尾 ---- */
+  P(ox,oy,sc, 5,12+b,7,2,scarf);
+  P(ox,oy,sc, 5,13+b,2,2,scarf_d);            /* 结 */
+  { int sw=(anim==PA_WALK)?(int)(sinf(ph)*1):0;
+    P(ox,oy,sc, 3+sw,13+b,2,3,scarf);
+    P(ox,oy,sc, 3+sw,15+b,1,1,scarf_d); }
+  /* ---- 躯干: 夹克(背暗前亮) + 腰带 ---- */
+  P(ox,oy,sc, 4,13+b,8,6,shirt);
+  P(ox,oy,sc, 4,13+b,1,6,mulc(shirt,170));
+  P(ox,oy,sc, 11,13+b,1,6,shade_c(shirt,10));
+  P(ox,oy,sc, 4,18+b,8,1,packrgb(70,48,30));
+  P(ox,oy,sc, 7,18+b,2,1,PACKED[C_GOLD]);
+  /* ---- 头 ---- */
+  P(ox,oy,sc, 4,5+b,8,6,skin);
+  P(ox,oy,sc, 4,7+b,1,2,mulc(skin,185));      /* 耳 */
+  /* ---- 发型 (帽子下面) ---- */
+  if(cs_hair==1){ /* 长发 */
+    P(ox,oy,sc, 4,5+b,8,1,hair);
+    P(ox,oy,sc, 3,6+b,1,8,hair);
+    P(ox,oy,sc, 12,6+b,1,2,hair);
+    P(ox,oy,sc, 3,14+b,2,2,hair);
+  } else if(cs_hair==2){ /* 马尾(走路甩动) */
+    P(ox,oy,sc, 4,5+b,8,1,hair);
+    P(ox,oy,sc, 3,6+b,1,3,hair);
+    { int sw=(anim==PA_WALK)?(int)(sinf(ph)*1):0;
+      P(ox,oy,sc, 2+sw,8+b,1,5,hair); }
+  } else if(cs_hair==3){ /* 光头: 红头巾代替草帽 */
+    P(ox,oy,sc, 4,4+b,8,2,PACKED[C_RED]);
+    P(ox,oy,sc, 4,5+b,8,1,mulc(PACKED[C_RED],168));
+    P(ox,oy,sc, 3,4+b,2,1,PACKED[C_RED]);
+  } else { /* 短发 */
+    P(ox,oy,sc, 4,5+b,8,1,hair);
+    P(ox,oy,sc, 4,6+b,1,2,hair);
   }
-  /* straw hat (wide brim; bald gets headband instead) */
+  /* ---- 草帽: 帽顶高光 + 宽檐前后明暗 + 帽带 ---- */
   if(cs_hair!=3){
-    P(ox,oy,sc, 5,0+b,7,1,straw2);            /* crown */
-    P(ox,oy,sc, 2,1+b,13,1,straw);            /* brim */
-    P(ox,oy,sc, 5,0+b,3,1,shade_c(straw,22)); /* crown highlight */
-    P(ox,oy,sc, 10,1+b,5,1,mulc(straw,182));  /* brim front shade */
+    P(ox,oy,sc, 5,1+b,6,3,straw);
+    P(ox,oy,sc, 5,1+b,6,1,straw_l);
+    P(ox,oy,sc, 2,4+b,12,1,straw);
+    P(ox,oy,sc, 2,4+b,5,1,straw_l);
+    P(ox,oy,sc, 9,4+b,5,1,straw_d);
+    P(ox,oy,sc, 2,5+b,12,1,mulc(straw,168));
+    P(ox,oy,sc, 6,3+b,4,1,PACKED[C_RED]);
   }
-  /* face: eye (blink on idle) + blush + smile */
-  int blink= (anim==PA_IDLE && ((int)(t*1.0f))%3==0);
-  if(!blink) P(ox,oy,sc, 9,5+b,1,2,dark);
-  else       P(ox,oy,sc, 9,6+b,1,1,dark);
-  P(ox,oy,sc, 7,7+b,1,1,mulc(skin,192));  /* blush */
-  P(ox,oy,sc, 10,8+b,2,1,mulc(skin,176)); /* smile */
-  if(anim==PA_WALK||anim==PA_IDLE){ /* hands free: arm hangs, swings a little */
+  /* ---- 脸: 眉 + 眼(眨眼) + 嘴 + 腮红 ---- */
+  { Uint32 brow=(cs_hair==3)?dark:hair;
+    P(ox,oy,sc, 8,6+b,3,1,brow); }
+  int blink=(anim==PA_IDLE&&((int)(t*1.2f))%3==0);
+  if(!blink) P(ox,oy,sc, 9,7+b,1,2,dark);
+  else       P(ox,oy,sc, 9,8+b,1,1,dark);
+  P(ox,oy,sc, 10,9+b,1,1,mulc(skin,176));
+  P(ox,oy,sc, 7,9+b,1,1,mulc(skin,190));
+  /* ---- 手臂 ---- */
+  if(anim==PA_WALK||anim==PA_IDLE){  /* 徒手: 摆臂, 竖持竿的握点在手 */
     int ao=(anim==PA_WALK)?(int)(sinf(ph+3.14159f)*2):0;
-    P(ox,oy,sc, 11,11+b+ao,2,4,shirt);
-    P(ox,oy,sc, 11,15+b+ao,2,1,skin);
-    if(hx){*hx=12;*hy=15+b+ao;}
+    P(ox,oy,sc, 11,13+b+ao/2,2,4,shirt);
+    P(ox,oy,sc, 11,17+b+ao/2,2,2,skin);
+    if(hx){*hx=12;*hy=17+b+ao/2;}
     return;
   }
-  /* fishing poses: both hands grip rod beside the head */
-  int chx=12,chy=5+b;
-  if(anim==PA_CAST){ float a=sinf(ph); chx=12+(int)(a*3); chy=4+((int)(a*2)); }
-  Pline(ox,oy,sc, 6,11+b, chx,chy, shirt);
-  Pline(ox,oy,sc, 11,11+b, chx,chy, shirt);
+  /* 钓鱼/收线: 双臂抬向握把 + 手 */
+  int chx=12,chy=8+b;
+  if(anim==PA_CAST){ float a=sinf(ph); chx=12+(int)(a*3); chy=7+b+((int)(a*2)); }
+  Pline(ox,oy,sc, 6,14+b, chx,chy, shirt);
+  Pline(ox,oy,sc, 10,14+b, chx,chy, shirt);
+  P(ox,oy,sc, chx-1,chy,2,2,skin);
   if(hx){*hx=chx;*hy=chy;}
 }
 
