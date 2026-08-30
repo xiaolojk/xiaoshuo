@@ -41,8 +41,15 @@
 /* vector text: TrueType/OTF anti-aliased font (system-style, no pixel font) */
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "stb_truetype.h"
+#if defined(__ANDROID__)||defined(__EMSCRIPTEN__)
+/* 移动端: 字体以 C 数组内嵌 (pfont_data.h, 由 pfont.otf 生成) */
+#include "pfont_data.h"
+static unsigned char* _binary_pfont_otf_start=(unsigned char*)pfont_otf_data;
+static unsigned char* _binary_pfont_otf_end=(unsigned char*)pfont_otf_data+sizeof(pfont_otf_data);
+#else
 extern unsigned char _binary_pfont_otf_start[];
 extern unsigned char _binary_pfont_otf_end[];
+#endif
 
 #define IN_W 512     /* logic grid (all layout code) */
 #define IN_H 288
@@ -765,6 +772,71 @@ static int area_spot(void){
 typedef struct{Uint8 space,accept,back,up,down,e,b,left,right;}PRESS;
 static PRESS press;
 
+/* ============ MOBILE: 触屏虚拟按键 (多点触控) ============
+   布局用逻辑坐标(512x288), 拇指可达的左右下角, 半透明绘制。
+   收到首个触摸事件即自动启用 (Android/iOS/触屏笔记本通用)。
+   ◀▶ 按住持续移动; 其余按钮一次触发, 映射到 press.*。 */
+enum{ VB_L=1,VB_R=2,VB_U=4,VB_D=8,VB_A=16,VB_B=32,VB_E=64,VB_SH=128 };
+typedef struct{ int x,y,w,h; const char*lab; Uint8 mask; }VBTN;
+static const VBTN VBTNS[]={
+  {  8,246,42,38,"<",   VB_L},
+  { 58,246,42,38,">",   VB_R},
+  {  8,204,42,38,"^",   VB_U},
+  { 58,204,42,38,"v",   VB_D},
+  {452,246,52,38,"A",   VB_A},
+  {398,250,46,34,"B",   VB_B},
+  {396,206,50,34,"BAG", VB_E},
+  {448,206,54,34,"SHOP",VB_SH},
+};
+#define NVB ((int)(sizeof(VBTNS)/sizeof(VBTNS[0])))
+static SDL_FingerID vbFid[NVB];   /* 每个按钮当前被哪根手指按住 (0=无) */
+static Uint8 vbOn[NVB];           /* 按住状态(高亮用) */
+static int touchUI=0;             /* 触屏UI开关: 首次触摸后启用 */
+static int vLeft=0,vRight=0;      /* 持续移动(替代键盘按住) */
+static int g_dstx,g_dsty,g_dstw,g_dsth,g_ww,g_wh;  /* 上帧 letterbox 区, 触点换算用 */
+static int vb_hit(int lx,int ly){
+  for(int i=0;i<NVB;i++){
+    const VBTN*t=&VBTNS[i];
+    if(lx>=t->x&&lx<t->x+t->w&&ly>=t->y&&ly<t->y+t->h)return i;
+  }
+  return -1;
+}
+static void vb_press(int i){
+  if(i<0)return;
+  vbOn[i]=1;
+  switch(VBTNS[i].mask){
+    case VB_L:  press.left=1;  vLeft=1;  break;
+    case VB_R:  press.right=1; vRight=1; break;
+    case VB_U:  press.up=1;    break;
+    case VB_D:  press.down=1;  break;
+    case VB_A:  press.space=1; press.accept=1; break;
+    case VB_B:  press.back=1;  break;
+    case VB_E:  press.e=1;     break;
+    case VB_SH: press.b=1;     break;
+  }
+}
+static void vb_release(int i){
+  if(i<0)return;
+  vbOn[i]=0; vbFid[i]=0;
+  if(VBTNS[i].mask==VB_L) vLeft=0;
+  if(VBTNS[i].mask==VB_R) vRight=0;
+}
+static void fill_a(int x,int y,int w,int h,Uint32 c,int a){
+  for(int yy=0;yy<h;yy++)for(int xx=0;xx<w;xx++)
+    setpix_aa(M2P(x+xx),M2P(y+yy),c,a);
+}
+static void draw_touchui(void){
+  if(!touchUI)return;
+  for(int i=0;i<NVB;i++){
+    const VBTN*t=&VBTNS[i];
+    Uint32 c=packrgb(30,34,46);
+    fill_a(t->x,t->y,t->w,t->h,c,vbOn[i]?200:110);
+    fill_a(t->x,t->y,t->w,2,packrgb(120,130,150),vbOn[i]?230:90);
+    fill_a(t->x,t->y+t->h-2,t->w,2,packrgb(10,12,18),160);
+    draw_text(t->x+(t->w-text_w(t->lab,1))/2,t->y+(t->h-9)/2,t->lab,PACKED[C_WHITE],1);
+  }
+}
+
 static int bagSize(void){ return 8+netLevel*4; }
 static void add_toast(const char*t){ strncpy(toast,t,47);toast[47]=0;toastT=2.0f; }
 static int is_night(void){ return (timeH<6||timeH>=19); }
@@ -1289,9 +1361,9 @@ static void cast_line(void){
 static void update_play(float dt){
   const Uint8*keys=SDL_GetKeyboardState(NULL);
   int moving=0; int spd=110;
-  /* 方向键 + WASD 都能走 */
-  if(keys[SDL_SCANCODE_LEFT]||keys[SDL_SCANCODE_A]){playerX-=(int)(spd*dt);moving=1;}
-  if(keys[SDL_SCANCODE_RIGHT]||keys[SDL_SCANCODE_D]){playerX+=(int)(spd*dt);moving=1;}
+  /* 方向键 + WASD + 触屏虚拟键都能走 */
+  if(keys[SDL_SCANCODE_LEFT]||keys[SDL_SCANCODE_A]||vLeft){playerX-=(int)(spd*dt);moving=1;}
+  if(keys[SDL_SCANCODE_RIGHT]||keys[SDL_SCANCODE_D]||vRight){playerX+=(int)(spd*dt);moving=1;}
   /* ---- 多区域: 走到屏幕边缘就切换区域 ----
      右缘: 去下一区域(深水区需要小船); 左缘: 回上一区域。
      areaCd 冷却 0.6s 防止贴着边缘按住方向键来回抖 */
@@ -2623,6 +2695,7 @@ static void st_render(SDL_Renderer*ren,SDL_Texture*tex){
   scr=(Uint32*)screen->pixels;scrpitch=screen->pitch/4;
   memset(scr,0,(size_t)(scrpitch*PH_H)*sizeof(Uint32));
   draw_top();
+  draw_touchui();     /* 与主循环一致: 触屏按键画在最上层 */
   SDL_UnlockSurface(screen);
   SDL_UpdateTexture(tex,NULL,screen->pixels,screen->pitch);
   SDL_SetRenderDrawColor(ren,0,0,0,255);
@@ -2658,6 +2731,9 @@ static void selftest(SDL_Window*win,SDL_Renderer*ren,SDL_Texture*tex){
   state=ST_PLAY; phase=PH_IDLE; pAnim=PA_IDLE; pAnimT=0.5f;
   area=AR_PIER; boat=0;
   timeH=14.0f; playerX=120; st_wait(ren,tex,0.3f); st_shot("04_play_day");
+  /* 触屏虚拟按键预览 */
+  touchUI=1; vbOn[0]=vbOn[6]=1; st_wait(ren,tex,0.2f); st_shot("22_touchui");
+  touchUI=0; vbOn[0]=vbOn[6]=0;
   /* 3b) dawn + dusk lighting */
   timeH=6.5f; st_wait(ren,tex,0.3f); st_shot("04b_play_dawn");
   timeH=17.5f; st_wait(ren,tex,0.3f); st_shot("04c_play_dusk");
@@ -2742,10 +2818,15 @@ static void selftest(SDL_Window*win,SDL_Renderer*ren,SDL_Texture*tex){
 int main(int argc,char*argv[]){
   (void)argc;(void)argv;
   if(SDL_Init(SDL_INIT_VIDEO)<0)return 1;
+#if defined(__ANDROID__)||defined(__IPHONEOS__)
+  touchUI=1;   /* 移动平台默认显示虚拟按键 */
+#endif
+  SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY,"0");
+  SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS,"0");   /* 触摸不再合成鼠标事件(避免点按=抛竿) */
+  SDL_SetHint(SDL_HINT_MOUSE_TOUCH_EVENTS,"0");
   SDL_Window*win=SDL_CreateWindow("PIXEL LAKE HEART - A Low-end Fishing Game",
       SDL_WINDOWPOS_CENTERED,SDL_WINDOWPOS_CENTERED,WIND_W,WIND_H,SDL_WINDOW_RESIZABLE);
   if(!win){SDL_Quit();return 1;}
-  SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY,"0");
   SDL_Renderer*ren=SDL_CreateRenderer(win,-1,0);
   if(!ren){SDL_Surface*ws=SDL_GetWindowSurface(win);ren=SDL_CreateSoftwareRenderer(ws);}
   if(!ren){SDL_DestroyWindow(win);SDL_Quit();return 1;}
@@ -2791,7 +2872,7 @@ int main(int argc,char*argv[]){
         }
         switch(ev.key.keysym.scancode){
           case SDL_SCANCODE_SPACE: case SDL_SCANCODE_RETURN: press.space=1;press.accept=1;break;
-          case SDL_SCANCODE_ESCAPE: press.back=1;break;
+          case SDL_SCANCODE_ESCAPE: case SDL_SCANCODE_AC_BACK: press.back=1;break;
           case SDL_SCANCODE_W: case SDL_SCANCODE_UP: press.up=1;break;
           case SDL_SCANCODE_S: case SDL_SCANCODE_DOWN: press.down=1;break;
           case SDL_SCANCODE_E: press.e=1;break;
@@ -2809,12 +2890,33 @@ int main(int argc,char*argv[]){
         }
       }
       else if(ev.type==SDL_MOUSEBUTTONDOWN&&ev.button.button==SDL_BUTTON_LEFT){press.space=1;press.accept=1;}
+      /* ---- 触屏: 虚拟按键 (多点触控, 触点从窗口坐标换算回逻辑坐标) ---- */
+      else if(ev.type==SDL_FINGERDOWN||ev.type==SDL_FINGERMOTION||ev.type==SDL_FINGERUP){
+        touchUI=1;
+        int lx=-1,ly=-1;
+        if(g_dstw>0&&g_dsth>0){
+          lx=(int)((ev.tfinger.x*(float)g_ww-(float)g_dstx)/(float)g_dstw*(float)IN_W);
+          ly=(int)((ev.tfinger.y*(float)g_wh-(float)g_dsty)/(float)g_dsth*(float)IN_H);
+        }
+        int bi=-1;
+        for(int i=0;i<NVB;i++)if(vbFid[i]&&vbFid[i]==ev.tfinger.fingerId){bi=i;break;}
+        if(ev.type==SDL_FINGERUP){
+          vb_release(bi);
+        }else{
+          int nb=(lx>=0&&ly>=0)?vb_hit(lx,ly):-1;
+          if(bi>=0&&bi!=nb){          /* 手指滑出原按钮: 释放并允许滑入新按钮 */
+            vb_release(bi); bi=-1;
+          }
+          if(bi<0&&nb>=0){ vbFid[nb]=ev.tfinger.fingerId; vb_press(nb); }
+        }
+      }
     }
     update_top(dt);
     SDL_LockSurface(screen);
     scr=(Uint32*)screen->pixels;scrpitch=screen->pitch/4;
     memset(scr,0,(size_t)(scrpitch*PH_H)*sizeof(Uint32));
     draw_top();
+    draw_touchui();          /* 触屏虚拟按键: 画在最上层 */
     SDL_UnlockSurface(screen);
     SDL_UpdateTexture(tex,NULL,screen->pixels,screen->pitch);
     /* ---- screen adaptation: crisp integer-scale letterbox ----
@@ -2823,6 +2925,7 @@ int main(int argc,char*argv[]){
        2) any other window: integer multiple of the 512x288 logic grid,
           centered with black bars (never a non-integer blurry scale). */
     int ww,wh;SDL_GetWindowSize(win,&ww,&wh);
+    g_ww=ww;g_wh=wh;          /* 记录窗口/letterbox 供触点换算 */
     SDL_Rect dst;
     float aspect=(float)ww/(float)wh;
     if(ww>=PH_W&&wh>=PH_H&&fabsf(aspect-16.0f/9.0f)<0.04f){
@@ -2833,6 +2936,7 @@ int main(int argc,char*argv[]){
       dst.w=IN_W*k;dst.h=IN_H*k;
       dst.x=(ww-dst.w)/2;dst.y=(wh-dst.h)/2;
     }
+    g_dstx=dst.x;g_dsty=dst.y;g_dstw=dst.w;g_dsth=dst.h;
     SDL_SetRenderDrawColor(ren,0,0,0,255);
     SDL_RenderClear(ren);
     SDL_RenderCopy(ren,tex,NULL,&dst);
