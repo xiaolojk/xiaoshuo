@@ -7,7 +7,12 @@ from PIL import Image
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BG = os.path.join(HERE, 'bg')
-SCENES = ['day', 'dawn', 'dusk', 'night', 'storm', 'title', 'pier', 'rod', 'shop']
+SCENES = ['pier_day', 'pier_dawn', 'pier_dusk', 'pier_night',
+          'bridge_day', 'bridge_dawn', 'bridge_dusk', 'bridge_night',
+          'reed_day', 'reed_dawn', 'reed_dusk', 'reed_night',
+          'isle_day', 'isle_dawn', 'isle_dusk', 'isle_night',
+          'deep_day', 'deep_dawn', 'deep_dusk', 'deep_night',
+          'storm', 'title', 'rod', 'pierbg', 'shop']
 NCOL = 96
 OUT = os.path.join(HERE, 'cg_scenes.h')
 

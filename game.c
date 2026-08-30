@@ -659,8 +659,15 @@ static void render_fish(int sp,int dim){
 #endif
 
 /* ---------- CG backdrops (phys-blitted for 1080p speed) ----------
-   AI 像素画场景(星露谷厚涂风): 0=day 1=dawn 2=dusk 3=night 4=storm 5=title 6=pier 7=rod 8=shop */
-enum{CGS_DAY,CGS_DAWN,CGS_DUSK,CGS_NIGHT,CGS_STORM,CGS_TITLE,CGS_PIER,CGS_ROD,CGS_SHOP};
+   AI 像素画场景(16-bit 日式经典像素风), 顺序与 tools_bmp2cg.py 的 SCENES 一致:
+   每区域 4 时段(day/dawn/dusk/night): 0-3码头 4-7木桥 8-11芦苇滩 12-15湖心岛 16-19深水
+   20=storm 21=title 22=rod 23=pierbg(捏脸) 24=shop */
+enum{CGS_PIER_D,CGS_PIER_A,CGS_PIER_U,CGS_PIER_N,
+     CGS_BR_D,CGS_BR_A,CGS_BR_U,CGS_BR_N,
+     CGS_RE_D,CGS_RE_A,CGS_RE_U,CGS_RE_N,
+     CGS_IS_D,CGS_IS_A,CGS_IS_U,CGS_IS_N,
+     CGS_DP_D,CGS_DP_A,CGS_DP_U,CGS_DP_N,
+     CGS_STORM,CGS_TITLE,CGS_ROD,CGS_PIERBG,CGS_SHOP};
 static Uint32 CG_PACK[CG_N][CG_NCOL];
 static void prep_cg(void){
   for(int s=0;s<CG_N;s++)for(int i=0;i<CG_NCOL;i++)
@@ -733,12 +740,40 @@ static float introT; static int slide=-1; static int menuSel=0;
 /* mod multipliers (set by mods/*.mod, default 1x) */
 static int modCoinMul=1, modXpMul=1;
 
+/* ============ 多区域地图: 玩家向右走到屏幕边缘就进入下一区域 ============
+   码头(起点) -> 木桥 -> 芦苇滩 -> 湖心岛 -> 深水区(需小船)
+   每个区域有独立 AI 背景图(按时段切换) + 独立前景装饰 + 鱼群水域 */
+enum{AR_PIER,AR_BRIDGE,AR_REED,AR_ISLE,AR_DEEP,AR_N};
+static int area=AR_PIER;
+static float areaCd=0;   /* 换场冷却, 防止贴边来回抖 */
+static const char* area_name(int a){
+  static const char*EN[AR_N]={"PIER","BRIDGE","REED MARSH","ISLAND","DEEP WATER"};
+  static const char*CN[AR_N]={"码头","木桥","芦苇滩","湖心岛","深水区"};
+  return T(EN[a],CN[a]);
+}
+static const char* area_hint(int a){ /* 进入下一区域的提示 */
+  static const char*EN[AR_N]={"walk right to the bridge","walk right to the reeds",
+    "walk right to the island","walk right to sail deep",""};
+  static const char*CN[AR_N]={"向右走前往木桥","向右走前往芦苇滩",
+    "向右走前往湖心岛","向右走出海去深水",""};
+  return T(EN[a],CN[a]);
+}
+/* 各区域的水域深度(决定鱼群): 码头按站位分岸边/桥面, 其余区域固定 */
+static int area_spot(void){
+  switch(area){
+    case AR_PIER:   return playerX<170?0:1;
+    case AR_BRIDGE: return 1;
+    case AR_REED:   return 0;
+    case AR_ISLE:   return 1;
+    default:        return 2;
+  }
+}
+
 typedef struct{Uint8 space,accept,back,up,down,e,b,left,right;}PRESS;
 static PRESS press;
 
 static int bagSize(void){ return 8+netLevel*4; }
 static void add_toast(const char*t){ strncpy(toast,t,47);toast[47]=0;toastT=2.0f; }
-static const char* spot_name(int r){ return r==0?T("SHORE","岸边"):(r==1?T("PIER","码头"):T("DEEP-WATER","深水")); }
 static int is_night(void){ return (timeH<6||timeH>=19); }
 
 /* ============================================================
@@ -777,6 +812,7 @@ static void save_game(void){
   fwrite(&cs_shirt,sizeof(int),1,f);
   fwrite(&cs_pants,sizeof(int),1,f);
   fwrite(&lang,sizeof(int),1,f);
+  fwrite(&area,sizeof(int),1,f);
   fclose(f);
 }
 static void load_game(void){
@@ -804,6 +840,8 @@ static void load_game(void){
   fread(&cs_shirt,sizeof(int),1,f);
   fread(&cs_pants,sizeof(int),1,f);
   fread(&lang,sizeof(int),1,f);
+  area=0; fread(&area,sizeof(int),1,f);   /* 旧档没有该字段 -> 保持码头 */
+  if(area<0||area>=AR_N)area=0;
   if(level<1)level=1;
   if(coins<0)coins=0;
   if(bagFill<0)bagFill=0; if(bagFill>64)bagFill=64;
@@ -1022,114 +1060,94 @@ static void draw_bite_fish(void){
   blit_fish_f(fx-16.0f,fy-16.0f,0.5f);
 }
 
-/* ---------- player figure (30-frame parametric) ---------- */
-/* block-scaled rect with Minecraft volume: per-pixel texel texture + top row
-   sunlit + bottom dark seam + left edge AO, so every body part reads as a
-   separate lit 3D cube (MC player look). */
+/* ---------- player figure (16-bit clean pixel style) ---------- */
+/* flat scaled rect: top row lighter + bottom row darker (clean 2-band
+   shading, no per-pixel noise) -- reads as classic SNES sprite */
 static void P(int ox,int oy,int sc,int x,int y,int w,int h,Uint32 c){
-  for(int by=y;by<y+h;by++){
-    int fr=by-y;
-    int dv=(h>=3)?((fr>=h*3/5)?-16:((fr>=h*2/5)?2:16)):3;
-    int top=(h>=2&&fr==0), bot=(h>=2&&fr==h-1);
-    for(int a=0;a<sc;a++){
-      int py0=oy+by*sc+a;
-      int prevd=1000;
-      for(int bx=x;bx<x+w;bx++){
-        for(int b=0;b<sc;b++){
-          int px0=ox+bx*sc+b;
-          /* multiplicative MC tone: stays visible on dark colours (boots/legs),
-             plus per-pixel dither and a guarantee it differs from the pixel
-             to its left -> every pixel of the sprite is its own tiny dot */
-          int d=mc_texel_pct((int)hash2(px0*7+(int)(c>>20),py0*13+((int)((c>>8)&15))));
-          d+=(int)(hash2(px0*3+1,py0*5+7)%3)-1;
-          if(prevd!=1000 && d==prevd) d=(d>=0)?d+1:d-1;
-          prevd=d;
-          Uint32 base=texel_c(c,d);
-          Uint32 col=shade_c(base,dv);
-          if(top) col=shade_c(col,16);        /* sunlit top face */
-          if(bot) col=mulc(col,45);           /* shaded bottom face */
-          if(bx==0) col=shade_c(col,-12);     /* left AO side */
-          else if(bx==w-1) col=shade_c(col,9);/* right sunlit side */
-          setpix(px0,py0,col);
-        }
-      }
-    }
+  int px=ox+x*sc,py=oy+y*sc,pw=w*sc,phh=h*sc;
+  fill(px,py,pw,phh,c);
+  if(h>=2){
+    fill(px,py,pw,sc,shade_c(c,16));
+    fill(px,py+phh-sc,pw,sc,mulc(c,182));
   }
 }
 static void Pline(int ox,int oy,int sc,int x0,int y0,int x1,int y1,Uint32 c){
   int dx=abs(x1-x0),sx=x0<x1?1:-1,dy=-abs(y1-y0),sy=y0<y1?1:-1,er=dx+dy;
   for(;;){ P(ox,oy,sc,x0,y0,1,1,c); if(x0==x1&&y0==y1)break; int e2=2*er; if(e2>=dy){er+=dy;x0+=sx;} if(e2<=dx){er+=dx;y0+=sy;} }
 }
-/* draw puppet (customizable appearance, Terraria-style); returns grip via hx,hy */
+/* draw puppet (customizable appearance); returns rod grip via hx,hy
+   16-bit 日式像素小人: 戴草帽的钓手, 侧视朝右, 大头小身, 干净色块 */
 static void draw_person(int ox,int oy,int sc,int anim,float t,int* hx,int* hy){
-  Uint32 skin=skin_c(),hair=hair_c(),cap=PACKED[C_CAP],shirt=shirt_c(),
-        pants=pants_c(),boot=PACKED[C_BOOT],dark=PACKED[C_DARK];
+  Uint32 skin=skin_c(),hair=hair_c(),shirt=shirt_c(),pants=pants_c(),
+        boot=PACKED[C_BOOT],dark=PACKED[C_DARK],
+        straw=packrgb(238,200,110),straw2=shade_c(straw,-38),
+        vest=packrgb(216,124,66),vest2=mulc(packrgb(216,124,66),168);
   float ph=t*6.0f;
-  int bob=0,lig=0,rig=0,larm=0,rarm=0;
+  int bob=0,lig=0,rig=0;
   if(anim==PA_WALK){
     float s1=sinf(ph),s2=sinf(ph+3.14159f);
-    lig=(int)(s1*3); rig=(int)(s2*3); larm=(int)(s2*2); rarm=(int)(s1*2);
-    bob=(int)(fabsf(sinf(ph))*1.0f);
+    lig=(int)(s1*2); rig=(int)(s2*2); bob=(int)(fabsf(sinf(ph)));
   } else if(anim==PA_IDLE){
     bob=(((int)(t*2))&1);
-  } else if(anim==PA_REEL){ /* arm pumping */
+  } else if(anim==PA_REEL){
     float s1=sinf(ph*2);
-    larm=(int)(s1*2); rarm=(int)(s1*-2); bob=(int)((s1>0)?1:0);
+    bob=(s1>0)?1:0;
   }
   int b=bob;
-  /* ---- hair styles (drawn under cap) ---- */
-  if(cs_hair==1){ /* long hair: crown + sides down to torso */
-    P(ox,oy,sc, 3,1+b,9,2,hair);
-    P(ox,oy,sc, 3,2+b,2,9,hair); P(ox,oy,sc, 10,2+b,2,9,hair);
-    P(ox,oy,sc, 3,10+b,2,3,hair);
-  } else if(cs_hair==2){ /* ponytail: crown + back tail swinging */
-    P(ox,oy,sc, 3,1+b,9,2,hair);
-    P(ox,oy,sc, 2,2+b,2,4,hair);
-    int sw=(anim==PA_WALK)?(int)(sinf(ph)*2):0;
-    P(ox,oy,sc, 1+sw,5+b,2,6,hair);
-  } else if(cs_hair==3){ /* bald - just sideburns */
-    P(ox,oy,sc, 4,5+b,1,2,mulc(hair,140)); P(ox,oy,sc, 10,5+b,1,2,mulc(hair,140));
-  } else { /* short hair: crown + short sides */
-    P(ox,oy,sc, 3,1+b,9,2,hair);
-    P(ox,oy,sc, 4,2+b,1,2,hair); P(ox,oy,sc, 10,2+b,1,2,hair);
-  }
-  /* cap (fisherman's bucket hat; tilted, sits over hair) */
-  if(cs_hair!=3){
-    P(ox,oy,sc, 2,0+b,10,2,cap); P(ox,oy,sc, 1,1+b,13,1,cap);
-    P(ox,oy,sc, 2,0+b,10,1,mulc(cap,180)); /* hat top highlight */
-  } else { /* bald gets a headband */
-    P(ox,oy,sc, 3,1+b,9,1,PACKED[C_WARN]);
-  }
-  /* face */
-  P(ox,oy,sc, 4,2+b,7,5,skin);
-  P(ox,oy,sc, 4,6+b,7,1,mulc(skin,200)); /* jaw shadow */
-  /* eye (blink on idle every ~3s) */
-  int blink= (anim==PA_IDLE && ((int)(t*1.0f))%3==0);
-  if(!blink){ P(ox,oy,sc, 6,4+b,1,1,dark); P(ox,oy,sc, 6,4+b,1,1,dark); }
-  /* torso */
-  P(ox,oy,sc, 3,7+b,9,7,shirt);
-  P(ox,oy,sc, 3,7+b,9,1,mulc(shirt,190)); /* collar highlight */
-  P(ox,oy,sc, 7,8+b,1,6,mulc(shirt,170)); /* center seam */
   /* legs + boots */
-  P(ox,oy,sc, 4+lig,14+b,3,6,pants);
-  P(ox,oy,sc, 9+rig,14+b,3,6,pants);
-  P(ox,oy,sc, 4+lig-1,19+b,4,2,boot);
-  P(ox,oy,sc, 8+rig+1,19+b,5,2,boot);
-  /* arms */
-  int shl=5, shr=10;
-  /* decide grip */
-  int chx=9, chy=3+b; /* default: rod held up-forward with both hands */
-  if(anim==PA_WALK||anim==PA_IDLE){ /* hands free */
-    Pline(ox,oy,sc,shl,8+b, 4-larm,15, shirt);
-    Pline(ox,oy,sc,shr,8+b, 11+rarm,15, shirt);
-    if(hx){*hx=6;*hy=12;}
+  P(ox,oy,sc, 5+lig,16,3,3,pants);
+  P(ox,oy,sc, 9+rig,16,3,3,pants);
+  P(ox,oy,sc, 4+lig,19,4,2,boot);
+  P(ox,oy,sc, 9+rig,19,4,2,boot);
+  /* torso: shirt + 橙色钓鱼马甲 */
+  P(ox,oy,sc, 4,10+b,9,6,shirt);
+  P(ox,oy,sc, 5,10+b,8,6,vest);
+  P(ox,oy,sc, 6,12+b,2,2,vest2);   /* chest pockets */
+  P(ox,oy,sc, 9,12+b,2,2,vest2);
+  /* head */
+  P(ox,oy,sc, 4,2+b,9,8,skin);
+  P(ox,oy,sc, 4,3+b,1,2,mulc(skin,185));  /* ear */
+  /* ---- hair styles (drawn under straw hat) ---- */
+  if(cs_hair==1){ /* long hair: crown + sides down past torso */
+    P(ox,oy,sc, 4,2+b,9,2,hair);
+    P(ox,oy,sc, 3,3+b,1,8,hair); P(ox,oy,sc, 12,3+b,1,8,hair);
+    P(ox,oy,sc, 3,11+b,1,3,hair);
+  } else if(cs_hair==2){ /* ponytail: crown + back tail swinging */
+    P(ox,oy,sc, 4,2+b,9,2,hair);
+    P(ox,oy,sc, 3,3+b,1,4,hair);
+    int sw=(anim==PA_WALK)?(int)(sinf(ph)*1):0;
+    P(ox,oy,sc, 2+sw,6+b,1,5,hair);
+  } else if(cs_hair==3){ /* bald - headband */
+    P(ox,oy,sc, 4,2+b,9,1,PACKED[C_WARN]);
+  } else { /* short hair: crown + short sides */
+    P(ox,oy,sc, 4,2+b,9,2,hair);
+    P(ox,oy,sc, 4,4+b,1,2,hair);
+  }
+  /* straw hat (wide brim; bald gets headband instead) */
+  if(cs_hair!=3){
+    P(ox,oy,sc, 5,0+b,7,1,straw2);            /* crown */
+    P(ox,oy,sc, 2,1+b,13,1,straw);            /* brim */
+    P(ox,oy,sc, 5,0+b,3,1,shade_c(straw,22)); /* crown highlight */
+    P(ox,oy,sc, 10,1+b,5,1,mulc(straw,182));  /* brim front shade */
+  }
+  /* face: eye (blink on idle) + blush + smile */
+  int blink= (anim==PA_IDLE && ((int)(t*1.0f))%3==0);
+  if(!blink) P(ox,oy,sc, 9,5+b,1,2,dark);
+  else       P(ox,oy,sc, 9,6+b,1,1,dark);
+  P(ox,oy,sc, 7,7+b,1,1,mulc(skin,192));  /* blush */
+  P(ox,oy,sc, 10,8+b,2,1,mulc(skin,176)); /* smile */
+  if(anim==PA_WALK||anim==PA_IDLE){ /* hands free: arm hangs, swings a little */
+    int ao=(anim==PA_WALK)?(int)(sinf(ph+3.14159f)*2):0;
+    P(ox,oy,sc, 11,11+b+ao,2,4,shirt);
+    P(ox,oy,sc, 11,15+b+ao,2,1,skin);
+    if(hx){*hx=12;*hy=15+b+ao;}
     return;
   }
-  /* fishing poses: both hands grip rod */
-  chx=9; chy=1+b;
-  if(anim==PA_CAST){ float a=sinf(ph); chx=9+(int)(a*4); chy=0+((int)(a*3)); }
-  Pline(ox,oy,sc,shl,8+b,chx,chy,shirt);
-  Pline(ox,oy,sc,shr,8+b,chx,chy,shirt);
+  /* fishing poses: both hands grip rod beside the head */
+  int chx=12,chy=5+b;
+  if(anim==PA_CAST){ float a=sinf(ph); chx=12+(int)(a*3); chy=4+((int)(a*2)); }
+  Pline(ox,oy,sc, 6,11+b, chx,chy, shirt);
+  Pline(ox,oy,sc, 11,11+b, chx,chy, shirt);
   if(hx){*hx=chx;*hy=chy;}
 }
 
@@ -1252,7 +1270,7 @@ static int roll_fish(void){
 #undef MAXP
 }
 static void cast_line(void){
-  spot=(playerX<170)?0:(playerX<340)?1:2;
+  spot=area_spot();
   plannedFish=roll_fish();
   bobX=(float)playerX; bobY=170+rndf()*28+spot*8;
   phase=PH_CAST; phaseT=0; castT=0.5f;
@@ -1264,12 +1282,31 @@ static void update_play(float dt){
   /* 方向键 + WASD 都能走 */
   if(keys[SDL_SCANCODE_LEFT]||keys[SDL_SCANCODE_A]){playerX-=(int)(spd*dt);moving=1;}
   if(keys[SDL_SCANCODE_RIGHT]||keys[SDL_SCANCODE_D]){playerX+=(int)(spd*dt);moving=1;}
-  /* 深水区需要小船: 码头尽头(x=336)没有船就出不去,给明确提示 */
-  int maxX=boat?(IN_W-24):336;
-  if(playerX>maxX){playerX=maxX;if(!boat&&moving)add_toast(T("BUY A BOAT ($150) TO SAIL DEEP","买小船($150)才能出海去深水"));}
-  playerX=clampij(playerX,20,maxX);
-  /* HUD 位置实时刷新: 旧版只在抛竿时更新 spot, 走路时看不出位置变化 */
-  if(phase==PH_IDLE) spot=(playerX<170)?0:(playerX<340)?1:2;
+  /* ---- 多区域: 走到屏幕边缘就切换区域 ----
+     右缘: 去下一区域(深水区需要小船); 左缘: 回上一区域。
+     areaCd 冷却 0.6s 防止贴着边缘按住方向键来回抖 */
+  areaCd-=dt;
+  if(playerX>IN_W-24){
+    playerX=IN_W-24;
+    if(moving&&area<AR_N-1&&areaCd<=0){
+      if(area+1==AR_DEEP&&!boat){
+        add_toast(T("BUY A BOAT ($150) TO SAIL DEEP","买小船($150)才能去深水区"));
+        areaCd=1.2f;
+      }else{
+        area++; playerX=24; areaCd=0.6f; spot=area_spot();
+        add_toast(area_name(area));
+      }
+    }
+  }else if(playerX<20){
+    playerX=20;
+    if(moving&&area>0&&areaCd<=0){
+      area--; playerX=IN_W-30; areaCd=0.6f; spot=area_spot();
+      add_toast(area_name(area));
+    }
+  }
+  playerX=clampij(playerX,20,IN_W-24);
+  /* HUD 位置实时刷新: 走路时也能看出区域/水域变化 */
+  if(phase==PH_IDLE) spot=area_spot();
   /* 时间: 白天一整个白天约16分钟(旧版3.8分钟太快); 夜晚自动5倍速流逝,
      空格还能直接睡觉跳到天亮, 不再有干等的死时间 */
   float rate=(dt/1800.0f)*24.0f;
@@ -1583,63 +1620,142 @@ static void draw_water(void){
     }
   }
 }
-static void draw_dock(void){
-  int night=is_night();
-  Uint32 d=PACKED[night?C_BROWN:C_DOCK],d2=PACKED[night?C_TRUNK:C_DOCK2];
+/* ---------- 多区域前景 (16-bit 干净色块风格, 替换旧 MC 体素码头) ----------
+   五个区域各画各的地形, 玩家脚底统一踩在 y=166 地面线:
+   码头=草地+木板栈桥   木桥=全宽拱形桥面+双横栏
+   芦苇滩=泥岸+芦苇丛   湖心岛=沙滩+贝壳   深水区=纯水面(玩家站船上) */
+static void fg_pier(int night){
   Uint32 grass=PACKED[night?C_BUSH:C_GRASS], dirt=PACKED[night?C_TRUNK:C_DOCK2];
-  /* left bank: Minecraft grass-block terrain (jagged blocky sod + dirt cubes) */
-  vox_ground(0,150,54,20,dirt,grass,night?8:16,1);
-  draw_tree(34,172,night);
-  /* reeds swaying (pixel stalks with tuft) */
+  Uint32 wood=PACKED[night?C_TRUNK:C_DOCK], wood2=PACKED[night?C_BROWN:C_DOCK2];
   Uint32 now=SDL_GetTicks();
-  for(int i=0;i<5;i++){
-    int rx=8+i*9;
-    int sway=(int)(sinf(now*0.0015f+i)*2);
-    Pline(0,0,1,rx,170,rx+sway,152,PACKED[night?C_TRUNK:C_DOCK2]);
-    setpix(rx+sway,151,PACKED[night?C_BUSH:C_GRASS]);
-    setpix(rx+sway+1,151,PACKED[night?C_BUSH:C_GRASS]);
+  /* 左岸: 草皮 + 土坡 */
+  fill(0,156,56,10,grass);
+  fill(0,166,56,24,dirt);
+  fill(0,164,56,2,mulc(grass,150));
+  if(!night){
+    setpix(8,153,PACKED[C_PINK]); setpix(40,155,PACKED[C_WHITE]);
+    setpix(22,154,PACKED[C_GOLD]); setpix(48,159,PACKED[C_PINK]);
   }
-  /* flowers (distinct pixels + tiny ground shadow) */
-  setpix(6,147,PACKED[C_PINK]); setpix(7,146,PACKED[C_PINK]); setpix(5,148,mulc(PACKED[C_PINK],150));
-  setpix(44,148,PACKED[C_WHITE]); setpix(20,145,PACKED[C_GOLD]); setpix(43,149,mulc(PACKED[C_GOLD],150));
-  if(!night){ setpix(48,150,PACKED[C_WHITE]); setpix(12,149,PACKED[C_PINK]); }
-  /* dock: 11 块木板铺到 x=352 为止 -- 码头右边是开放湖面(深水区),
-     买了船才能驾船出去, 没船的人走到码头尽头会被拦下 */
-  for(int p=0;p<11;p++){
-    int x0=p*32;
-    vox_wood(x0,170,32,13,d,night?8:16,p);
-    if(p>0) fill(x0,170,1,13,mulc(d,38));   /* board seam */
-    for(int xx=x0+8;xx<x0+32;xx+=24) if(hash2(xx,p)%3==0) setpix(xx,171,mulc(d,75)); /* nails */
+  /* 木板栈桥: x=56 起铺满到右缘 */
+  for(int x=56;x<IN_W;x+=32){
+    int w=(x+32>IN_W)?(IN_W-x):32;
+    fill(x,164,w,14,wood);
+    fill(x,164,w,1,shade_c(wood,14));      /* 顶亮线 */
+    fill(x,177,w,1,mulc(wood,182));        /* 底暗线 */
+    if(x+32<=IN_W) fill(x+31,164,1,14,mulc(wood,148)); /* 板缝 */
+    setpix(x+8,168,mulc(wood,118)); setpix(x+22,171,mulc(wood,118)); /* 钉 */
   }
-  /* 码头尽头: 系缆桩 */
-  vox_cube(340,164,4,8,d2,night?6:12,6,77);
-  vox_cube(348,164,4,8,d2,night?6:12,6,78);
-  /* railing posts as lit cubes (only over the dock) */
-  for(int x=8;x<340;x+=24) vox_cube(x,164,2,6,d2,night?6:12,6,(x>>3)&255);
-  /* water pillars: lit top cap + textured cube columns (only under the dock) */
-  for(int x=-30;x<352;x+=64){
-    int sx=(x>>4)&255;
-    for(int yy=184;yy<IN_H;yy++){
-      int prevd=1000;
-      for(int k=0;k<4;k++){
-        unsigned hc=hash2((k>>1)*13+sx,(yy>>1)*17+((yy/4)&31));
-        int d=mc_texel_pct((int)hc);
-        d+=(int)(hash2(k*5+sx,yy*3)%3)-1;
-        if(k>0 && d==prevd) d=(d>=0)?d+1:d-1;
-        prevd=d;
-        int e=0;
-        if(k==0) e=-10; else if(k==3) e=10;   /* AO left / sunlit right */
-        setpix(x+34+k,yy,shade_c(texel_c(d2,d),e));
-      }
-    }
-    vox_cube(x+32,180,8,4,shade_c(d2,12),10,8,sx+31);
-  }
-  /* post reflections */
-  for(int x=-30;x<IN_W;x+=64){
-    for(int y=183;y<200;y+=2){
+  /* 水中桩 + 倒影 */
+  for(int x=88;x<IN_W;x+=64){
+    fill(x,178,6,14,wood2);
+    fill(x,178,6,1,shade_c(wood2,10));
+    fill(x+1,192,4,2,mulc(wood2,110));
+    for(int y=194;y<210;y+=3){
       int wob=((y+(int)(now/230))%4)-2;
-      fill(x+34+wob,y,4,1,mulc(d2,120));
+      fill(x+wob,y,5,1,mulc(wood2,120));
     }
+  }
+  /* 系缆桩(栈桥起点) */
+  fill(52,158,4,8,wood2); fill(52,158,4,1,shade_c(wood2,10)); fill(53,156,2,2,wood2);
+}
+static void fg_bridge(int night){
+  Uint32 wood=PACKED[night?C_TRUNK:C_DOCK], wood2=PACKED[night?C_BROWN:C_DOCK2];
+  Uint32 now=SDL_GetTicks();
+  /* 全宽拱形桥面: 中间微微拱起, 交替板色 */
+  for(int x=0;x<IN_W;x+=32){
+    Uint32 c=((x/32)&1)?mulc(wood,188):wood;
+    int lift=4-((x+16-256)<0?-(x+16-256):(x+16-256))/64;   /* 中间高4px */
+    if(lift<0)lift=0;
+    fill(x,166-lift,32,14+lift,c);
+    fill(x,166-lift,32,1,shade_c(c,14));
+    fill(x,179,32,1,mulc(c,182));
+    if(x+32<IN_W) fill(x+31,166-lift,1,14+lift,mulc(c,148));
+  }
+  /* 栏杆(后景, 玩家走在前面): 立柱 + 上下双横栏 */
+  for(int x=4;x<IN_W;x+=32){
+    fill(x,140,3,28,wood2);
+    fill(x,140,3,1,shade_c(wood2,10));
+    fill(x,140,1,28,shade_c(wood2,8));
+  }
+  fill(0,144,IN_W,3,wood2);
+  fill(0,145,IN_W,1,shade_c(wood2,12));
+  fill(0,158,IN_W,2,mulc(wood2,170));
+  /* 桥下支柱 + 倒影 */
+  for(int x=28;x<IN_W;x+=64){
+    fill(x,180,6,16,wood2);
+    fill(x+1,196,4,2,mulc(wood2,110));
+    for(int y=198;y<214;y+=3){
+      int wob=((y+(int)(now/230))%4)-2;
+      fill(x+wob,y,5,1,mulc(wood2,120));
+    }
+  }
+}
+static void fg_reed(int night){
+  Uint32 mud=PACKED[night?C_TRUNK:C_DOCK2];
+  Uint32 reed=PACKED[night?C_BUSH:C_GRASS], reed2=PACKED[night?C_TRUNK:C_DOCK];
+  Uint32 now=SDL_GetTicks();
+  /* 湿地泥岸 + 水洼 */
+  fill(0,166,IN_W,10,mud);
+  fill(0,176,IN_W,6,mulc(mud,182));
+  fill(0,166,IN_W,1,shade_c(mud,12));
+  for(int x=20;x<IN_W;x+=48) fill(x,182,24,3,PACKED[night?C_DEEPWATER:C_WATER]);
+  /* 芦苇丛(带香蒲穗, 随风摇摆) */
+  for(int i=0;i<26;i++){
+    int rx=8+i*19+((i*37)%9);
+    if(rx>=IN_W)break;
+    int hh=26+((i*13)%22);
+    int sway=(int)(sinf(now*0.0015f+i*1.7f)*3.0f);
+    Pline(0,0,1,rx,166,rx+sway,166-hh,(i&1)?reed:reed2);
+    if((i&1)==0){
+      Uint32 c=PACKED[night?C_DOCK2:C_BROWN];
+      fill(rx+sway-1,160-hh,3,7,c);
+      fill(rx+sway-1,160-hh,3,1,shade_c(c,12));
+    }
+  }
+  /* 岸边小石 */
+  for(int i=0;i<8;i++){
+    int sx=30+i*61;
+    setpix(sx,169,PACKED[C_GREY]); setpix(sx+1,169,PACKED[C_SILVER]); setpix(sx,170,PACKED[C_GREY]);
+  }
+}
+static void fg_isle(int night){
+  Uint32 sand=PACKED[night?C_DOCK2:C_SAND], sand2=PACKED[night?C_TRUNK:C_DOCK];
+  Uint32 now=SDL_GetTicks();
+  fill(0,164,IN_W,8,sand);
+  fill(0,172,IN_W,10,sand2);
+  fill(0,164,IN_W,1,shade_c(sand,16));
+  fill(0,171,IN_W,1,mulc(sand,185));
+  /* 湿沙浪线(起伏) */
+  for(int x=0;x<IN_W;x+=16){
+    int ph=(int)(sinf(now*0.001f+x*0.3f)*2.0f);
+    fill(x+ph,176,12,1,PACKED[night?C_WATER2:C_WHITE]);
+  }
+  /* 贝壳 + 海星点缀 */
+  for(int i=0;i<7;i++){
+    int sx=18+i*68+(i*29)%17, sy=166+(i*7)%5;
+    setpix(sx,sy,PACKED[C_PINK]); setpix(sx+1,sy-1,PACKED[C_PINK]);
+    setpix(sx+2,sy,PACKED[C_WHITE]);
+  }
+  setpix(200,168,PACKED[C_RED]); setpix(201,167,PACKED[C_RED]);
+  setpix(199,167,PACKED[C_RED]); setpix(200,169,PACKED[C_RED]);
+}
+static void fg_deep(int night){
+  Uint32 now=SDL_GetTicks();
+  /* 深水: 无地面, 只有起伏浪线 */
+  for(int x=0;x<IN_W;x+=8){
+    int ph=(int)(sinf(now*0.0012f+x*0.05f)*2.0f);
+    fill(x,150+ph,8,1,PACKED[night?C_WATER2:C_WHITE]);
+    if((x/8)%3==0) fill(x,156+ph,8,1,mulc(PACKED[night?C_DEEPWATER:C_WATER2],170));
+  }
+}
+static void draw_foreground(void){
+  int night=is_night();
+  switch(area){
+    case AR_PIER:   fg_pier(night);   break;
+    case AR_BRIDGE: fg_bridge(night); break;
+    case AR_REED:   fg_reed(night);   break;
+    case AR_ISLE:   fg_isle(night);   break;
+    default:        fg_deep(night);   break;
   }
 }
 /* 小船: 上翘船头船尾 + 木板船身; 买了船后停在码头尽头, 走过去就乘船出海 */
@@ -1660,10 +1776,10 @@ static void draw_player(void){
   int sc=2;
   int ox=px, oy=124;
   int hx,hy;
-  /* 有船: 玩家在深水段(x>=340)时乘船, 否则船系在码头尽头 */
+  /* 有船: 在深水区玩家乘船; 其他区域小船系在右缘岸边 */
   if(boat){
-    if(playerX>=340) draw_boat_hull(playerX,is_night());
-    else draw_boat_hull(356,is_night());
+    if(area==AR_DEEP) draw_boat_hull(playerX,is_night());
+    else draw_boat_hull(486,is_night());
   }
   int fishing=(phase==PH_CAST||phase==PH_WAIT||phase==PH_NIBBLE||phase==PH_MISS||phase==PH_CATCHMSG);
   int anim=(state==ST_REEL)?PA_REEL:pAnim;
@@ -1698,23 +1814,28 @@ static void draw_player(void){
     (void)hx;(void)hy;
   }
 }
-/* 按当前时刻挑选 AI 湖景背景图 */
+/* 按当前时刻+区域挑选 AI 湖景背景图 (每区域4张: day/dawn/dusk/night) */
 static int lake_scene_now(void){
-  if(is_night())return CGS_NIGHT;
-  if(timeH<8.0f)return CGS_DAWN;
-  if(timeH>=17.0f)return CGS_DUSK;
-  return CGS_DAY;
+  int base=area*4;
+  if(is_night())return base+3;
+  if(timeH<8.0f)return base+1;
+  if(timeH>=17.0f)return base+2;
+  return base;
 }
 static void draw_play(void){
-  draw_cg_pan(lake_scene_now(),0);   /* AI 像素画湖景(整幅天空+水面) */
+  draw_cg_pan(lake_scene_now(),0);   /* AI 像素画湖景(整幅天空+水面), 按区域+时段选图 */
   draw_ambient();            /* fish are ALWAYS visible cruising the lake */
-  draw_dock();
-  /* 区域标牌: 画在码头前沿, 走到哪一眼看清; 深水区没船是红色, 买了船变金色 */
-  { Uint32 g=PACKED[C_GREEN], r=boat?PACKED[C_GOLD]:PACKED[C_RED];
-    fill(164,181,14,3,g); fill(330,181,14,3,r);
-    draw_text(154,187,T("PIER","码头"),g,1);
-    if(boat) draw_text(303,187,T("DEEP:BOAT","深水·乘船"),r,1);
-    else     draw_text(303,187,T("DEEP:NEED BOAT","深水·需船"),r,1);
+  draw_foreground();
+  /* 区域木牌(左上 HUD 下): 当前区域名 */
+  {
+    const char*an=area_name(area);
+    Uint32 wood=packrgb(74,52,28);
+    int tw=text_w(an,1);
+    fill(8,44,tw+12,14,wood);
+    fill(8,44,tw+12,1,shade_c(wood,20));
+    fill(8,57,tw+12,1,mulc(wood,150));
+    fill(11,58,3,5,PACKED[C_TRUNK]);   /* 牌柱 */
+    draw_text(14,48,an,PACKED[C_GOLD],1);
   }
   int drawLine=(phase==PH_CAST||phase==PH_WAIT||phase==PH_NIBBLE||phase==PH_MISS||phase==PH_CATCHMSG);
   if(drawLine) draw_player();
@@ -1729,8 +1850,13 @@ static void draw_play(void){
   snprintf(b,64,T("LV%d","等%d") ,level); { char bb[64]; snprintf(bb,64,"LV%d",level); draw_text(8,20,bb,PACKED[C_CYAN],1); }
   snprintf(b,64,"%02d:%02d %s",(int)timeH,(int)((timeH-(int)timeH)*60),is_night()?T("NIGHT","夜晚"):T("DAY","白天"));
   draw_text(IN_W-text_w(b,1)-8,6,b,is_night()?PACKED[C_YELLOW]:PACKED[C_WHITE],1);
-  snprintf(b,64,T("SPOT:%s","位置:%s"),spot_name(spot)); draw_text(IN_W-text_w(b,1)-8,20,b,PACKED[C_SILVER],1);
+  snprintf(b,64,T("AREA:%s","区域:%s"),area_name(area)); draw_text(IN_W-text_w(b,1)-8,20,b,PACKED[C_SILVER],1);
   { const char*bs=T("B:SHOP","B:商店"); draw_text(IN_W-text_w(bs,1)-8,34,bs,PACKED[C_SILVER],1); }
+  /* 临近右缘: 显示下一个区域的去向提示 */
+  if(area<AR_N-1&&playerX>IN_W-120){
+    char h[80]; snprintf(h,80,">> %s",area_hint(area));
+    draw_text(IN_W-text_w(h,1)-8,138,h,PACKED[C_WHITE],1);
+  }
   if(phase==PH_IDLE){
     if(is_night()) center_text(224,T("NIGHT: SPACE TO SLEEP TILL DAWN","夜晚·按空格睡觉到天亮"),PACKED[C_WARN],1);
     else center_text(224,T("SPACE TO CAST","按空格抛竿"),PACKED[C_WHITE],1);
@@ -2127,7 +2253,7 @@ static void update_lanmenu(void){
   if(press.back)state=ST_TITLE;
 }
 static void draw_lanmenu(void){
-  draw_cg_pan(CGS_DAWN,0);
+  draw_cg_pan(CGS_PIER_A,0);
   darkall(120);
   center_text(12,T("LAN MULTIPLAYER","局域网联机"),PACKED[C_GOLD],2);
   center_text(28,T("SAME LAKE, LIVE TOGETHER","同湖共钓 实时在线"),PACKED[C_CYAN],1);
@@ -2168,7 +2294,8 @@ static void update_shop(void){
     else add_toast(T("ALREADY MAX","已是最大")); }
   if(press.back)state=ST_PLAY;
 }
-/* ---------- shopkeeper: Dave-style boss sprite + counter + chatter ---------- */
+/* ---------- shopkeeper: 16-bit 日式鲜鱼市场大叔 ----------
+   白毛巾头带 + 圆眼镜 + 八字胡, 藏青法被 + 白围裙, 手臂搭木柜台上 */
 static int keeperLine=-1;
 static const char* KEEPER_EN[4]={"FRESH CATCH? GOOD PRICE!","THE LAKE KEEPS SECRETS...","TRY DEEP WATER, KID.","STORM BREWING TONIGHT."};
 static const char* KEEPER_CN[4]={"有新鲜的鱼吗？好价钱！","这片湖藏着秘密……","去深水试试吧，孩子。","今晚有暴风雨。"};
@@ -2176,51 +2303,59 @@ static void draw_shopkeeper(int ox,int oy,int sc,float t){
   int br=(int)(sinf(t*1.6f)*1.0f);            /* breathing */
   int blink=(((int)(t*0.9f))%5)==0;
   int talk=(((int)(t*2.2f))%2)==0;
-  Uint32 skin=packrgb(228,182,142), beard=packrgb(214,214,222), shirt=packrgb(96,104,118),
-        cap=packrgb(196,70,58), apron=packrgb(76,116,186), dark=packrgb(16,16,20),
+  Uint32 skin=packrgb(232,186,146), skin2=mulc(packrgb(232,186,146),186),
+        happi=packrgb(58,80,148), happi2=mulc(packrgb(58,80,148),172),
+        apron=packrgb(236,232,220), apron2=mulc(packrgb(236,232,220),186),
+        band=packrgb(242,240,232), grey=packrgb(198,198,196),
+        lens=packrgb(244,248,250), dark=packrgb(16,16,20),
         wood=PACKED[C_DOCK], wood2=PACKED[C_DOCK2];
-  /* beret */
-  P(ox,oy,sc, 8,1+br,26,4,cap); P(ox,oy,sc, 6,4+br,30,2,cap);
-  P(ox,oy,sc, 8,1+br,26,1,mulc(cap,190));
-  P(ox,oy,sc, 20,0+br,2,2,cap); /* beret stem */
-  /* face */
-  P(ox,oy,sc, 12,5+br,18,12,skin);
-  P(ox,oy,sc, 12,5+br,18,1,mulc(skin,215));
-  /* bushy brows */
-  P(ox,oy,sc, 15,8+br,6,2,beard); P(ox,oy,sc, 22,8+br,6,2,beard);
-  /* eyes (blink) */
-  if(!blink){
-    P(ox,oy,sc, 16,11+br,4,3,packrgb(252,252,252));
-    P(ox,oy,sc, 23,11+br,4,3,packrgb(252,252,252));
-    P(ox,oy,sc, 17,12+br,2,2,dark); P(ox,oy,sc, 24,12+br,2,2,dark);
-  }else{
-    P(ox,oy,sc, 16,12+br,4,1,dark); P(ox,oy,sc, 23,12+br,4,1,dark);
-  }
-  /* nose */
-  P(ox,oy,sc, 20,11+br,2,3,mulc(skin,178));
-  /* huge beard hiding mouth (moves when talking) */
-  P(ox,oy,sc, 12,15+br,18,6,beard);
-  P(ox,oy,sc, 14,14+br,14,2,beard);
-  P(ox,oy,sc, 12,20+br,18,2,mulc(beard,150));
-  if(talk) P(ox,oy,sc, 20,13+br,2,1,dark);
-  /* rotund torso */
-  P(ox,oy,sc, 8,21+br,26,20,shirt);
-  P(ox,oy,sc, 8,21+br,26,1,mulc(shirt,200));
-  /* apron with pocket */
-  P(ox,oy,sc, 13,23+br,16,17,apron);
-  P(ox,oy,sc, 15,25+br,12,2,mulc(apron,185));
-  P(ox,oy,sc, 16,32+br,10,6,mulc(apron,140));
-  /* arms resting on counter */
-  P(ox,oy,sc, 4,26+br,5,11,shirt); P(ox,oy,sc, 33,26+br,5,11,shirt);
-  P(ox,oy,sc, 4,36+br,5,3,skin);   P(ox,oy,sc, 33,36+br,5,3,skin);
-  /* counter with wood grain + display fish */
-  P(ox,oy,sc, 2,40,40,3,wood);
-  P(ox,oy,sc, 2,40,40,1,mulc(wood,185));
-  for(int k=0;k<10;k++) setpix(ox+(4+k*4)*sc/2,oy+41*sc/2,wood2);
-  P(ox,oy,sc, 3,43,3,10,wood2); P(ox,oy,sc, 38,43,3,10,wood2);
-  /* little fish on counter */
-  fill(ox+14*sc,oy+38*sc,10*sc/2,3*sc/2,mulc(PACKED[C_CYAN],200));
-  setpix(ox+13*sc,oy+39*sc,PACKED[C_WHITE]);
+  /* ---- 头: 圆脸 + 白毛巾头带(结在右侧) ---- */
+  P(ox,oy,sc, 12,4+br,18,13,skin);
+  P(ox,oy,sc, 12,4+br,18,1,shade_c(skin,10));
+  P(ox,oy,sc, 12,15+br,18,2,skin2);           /* 下巴阴影 */
+  P(ox,oy,sc, 12,2+br,18,3,band);             /* 头带 */
+  P(ox,oy,sc, 30,2+br,4,2,band);              /* 头带侧结 */
+  P(ox,oy,sc, 33,3+br,3,1,mulc(band,170));
+  /* ---- 圆眼镜: 白镜片 + 深框 ---- */
+  P(ox,oy,sc, 14,8+br,7,6,lens);
+  P(ox,oy,sc, 21,8+br,7,6,lens);
+  P(ox,oy,sc, 14,8+br,7,1,dark);  P(ox,oy,sc, 14,13+br,7,1,dark);
+  P(ox,oy,sc, 14,8+br,1,6,dark);  P(ox,oy,sc, 20,8+br,1,6,dark);
+  P(ox,oy,sc, 21,8+br,7,1,dark);  P(ox,oy,sc, 21,13+br,7,1,dark);
+  P(ox,oy,sc, 21,8+br,1,6,dark);  P(ox,oy,sc, 27,8+br,1,6,dark);
+  P(ox,oy,sc, 20,10+br,2,1,dark);              /* 鼻梁 */
+  if(!blink){ P(ox,oy,sc, 16,10+br,2,2,dark); P(ox,oy,sc, 23,10+br,2,2,dark); }
+  else      { P(ox,oy,sc, 16,11+br,2,1,dark); P(ox,oy,sc, 23,11+br,2,1,dark); }
+  /* ---- 红鼻头 + 脸红 + 八字胡 ---- */
+  P(ox,oy,sc, 20,11+br,2,2,packrgb(224,120,96));
+  P(ox,oy,sc, 13,13+br,1,1,packrgb(232,150,120));
+  P(ox,oy,sc, 28,13+br,1,1,packrgb(232,150,120));
+  P(ox,oy,sc, 14,14+br,5,2,grey);
+  P(ox,oy,sc, 23,14+br,5,2,grey);
+  if(talk) P(ox,oy,sc, 19,16+br,4,1,dark);     /* 说话张嘴 */
+  /* ---- 身体: 藏青法被 + 白围裙 ---- */
+  P(ox,oy,sc, 8,17+br,28,24,happi);
+  P(ox,oy,sc, 8,17+br,28,1,shade_c(happi,12));
+  P(ox,oy,sc, 8,17+br,2,24,happi2);           /* 左袖暗侧 */
+  P(ox,oy,sc, 34,17+br,2,24,shade_c(happi,8));
+  P(ox,oy,sc, 14,17+br,16,2,apron);           /* 白色领口 */
+  P(ox,oy,sc, 13,21+br,18,20,apron);          /* 围裙 */
+  P(ox,oy,sc, 13,21+br,18,1,mulc(apron,182));
+  P(ox,oy,sc, 16,30+br,12,7,apron2);          /* 围裙口袋 */
+  /* 手臂搭在柜台上 */
+  P(ox,oy,sc, 4,28+br,6,10,happi);
+  P(ox,oy,sc, 34,28+br,6,10,happi);
+  P(ox,oy,sc, 4,37+br,6,3,skin);
+  P(ox,oy,sc, 34,37+br,6,3,skin);
+  /* ---- 柜台: 干净木台 + 冰 + 展示鱼 ---- */
+  P(ox,oy,sc, 2,41,40,4,wood);
+  P(ox,oy,sc, 2,41,40,1,shade_c(wood,12));
+  P(ox,oy,sc, 2,45,40,3,wood2);
+  P(ox,oy,sc, 3,48,3,8,wood2);
+  P(ox,oy,sc, 38,48,3,8,wood2);
+  P(ox,oy,sc, 14,39,12,2,packrgb(210,230,240));   /* 碎冰 */
+  fill(ox+16*sc,oy+37*sc,10*sc/2,3*sc/2,packrgb(120,170,210));  /* 展示鱼 */
+  setpix(ox+15*sc,oy+38*sc,PACKED[C_WHITE]);
 }
 static void draw_shop(void){
   draw_cg_pan(CGS_SHOP,0);  /* AI 商店内景(星露谷风) */
@@ -2300,7 +2435,7 @@ static const char* IN_CN[5]={
   "还有最后一个承诺:\"守护这片湖。\"",
   "第1天——你的传奇从此开始"};
 #define SLIDE_T 4.0f
-static int scene_for_slide(int s){ return s<2?CGS_STORM:(s==2?CGS_ROD:(s==3?CGS_PIER:CGS_DAWN)); }
+static int scene_for_slide(int s){ return s<2?CGS_STORM:(s==2?CGS_ROD:(s==3?CGS_PIERBG:CGS_PIER_D)); }
 static void draw_rain(float t){
   Uint32 rain2=mulc(PACKED[C_CYAN],110);
   for(int i=0;i<40;i++){ int x=(i*47+(int)(t*90))%IN_W; int y=(i*29+(int)(t*300))%170;
@@ -2377,7 +2512,7 @@ static void update_custom(void){
   if(press.back)state=ST_TITLE;
 }
 static void draw_custom(void){
-  draw_cg_pan(CGS_PIER,0); /* AI 码头画作捏脸背景 */
+  draw_cg_pan(CGS_PIERBG,0); /* AI 码头画作捏脸背景 */
   darkall(140);            /* 压暗一层保证文字可读, 不遮死画面 */
   center_text(10,T("CREATE YOUR ANGLER","打造你的钓手"),PACKED[C_GOLD],2);
   /* live preview: walking puppet at 4x, mirrored panels */
@@ -2521,6 +2656,7 @@ static void selftest(SDL_Window*win,SDL_Renderer*ren,SDL_Texture*tex){
   lang=1; slide=0; introT=2.0f; st_wait(ren,tex,0.3f); st_shot("03c_intro0_cn");
   /* 3) play day / idle (Stardew-style scenery) */
   state=ST_PLAY; phase=PH_IDLE; pAnim=PA_IDLE; pAnimT=0.5f;
+  area=AR_PIER; boat=0;
   timeH=14.0f; playerX=120; st_wait(ren,tex,0.3f); st_shot("04_play_day");
   /* 3b) dawn + dusk lighting */
   timeH=6.5f; st_wait(ren,tex,0.3f); st_shot("04b_play_dawn");
@@ -2530,11 +2666,17 @@ static void selftest(SDL_Window*win,SDL_Renderer*ren,SDL_Texture*tex){
   /* 5) casting arc (mid-cast) */
   timeH=14.0f; phase=PH_CAST; pAnim=PA_CAST; castT=0.25f; bobX=340; bobY=190;
   st_wait(ren,tex,0.1f); st_shot("06_casting");
-  /* 4b) 乘船出海深水区(买了船走到码头尽头) */
-  boat=1; playerX=420; spot=2; phase=PH_IDLE; pAnim=PA_IDLE;
+  /* 3c) 多区域巡游: 向右走依次 木桥 -> 芦苇滩 -> 湖心岛 */
+  timeH=14.0f; phase=PH_IDLE; pAnim=PA_IDLE;
+  area=AR_BRIDGE; playerX=200; spot=1; st_wait(ren,tex,0.3f); st_shot("19_bridge");
+  area=AR_REED;   playerX=150; spot=0; st_wait(ren,tex,0.3f); st_shot("20_reed");
+  area=AR_ISLE;   playerX=240; spot=1; st_wait(ren,tex,0.3f); st_shot("21_isle");
+  /* 4b) 乘船深水区 */
+  area=AR_DEEP; boat=1; playerX=260; spot=2;
   st_wait(ren,tex,0.3f); st_shot("17_boat_deep");
-  /* 4c) 没船的人被拦在码头尽头 */
-  boat=0; playerX=330; spot=1; st_wait(ren,tex,0.3f); st_shot("18_no_boat_wall");
+  /* 4c) 没船的人在湖心岛右缘被提示需要小船 */
+  area=AR_ISLE; boat=0; playerX=470; spot=1; st_wait(ren,tex,0.3f); st_shot("18_no_boat_wall");
+  area=AR_PIER; playerX=120;
   /* 6) waiting: Dave-style fish approaching the bobber */
   phase=PH_WAIT; pAnim=PA_WAIT; phaseT=1.2f; bobX=330; bobY=185;
   plannedFish=6; nibbleDelay=3.0f;

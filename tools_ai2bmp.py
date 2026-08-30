@@ -70,7 +70,7 @@ if __name__ == '__main__':
         os.makedirs(OUT)
     debug = '--debug' in sys.argv
     manual = {}
-    no_align = {'ai_rod', 'ai_shop'}   # 特写/内景, 不做水线对齐
+    no_align = {'ai_rod', 'ai_shop', 'ai_pierbg'}   # 特写/内景, 不做水线对齐
     for f in sorted(os.listdir(SRC)):
         if not f.lower().endswith(('.jpg', '.png')):
             continue
