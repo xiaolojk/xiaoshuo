@@ -20,9 +20,33 @@
 </head>
 <body>
 <h1>PixelLakeHeart — 游戏实时截屏</h1>
-<div class="sub">游戏引擎实际渲染输出（1536×864 逻辑 512×288 三倍放大）· 含本次「场景提亮 + 真字体内嵌 + 鱼类修复」改动效果</div>
+<div class="sub">游戏引擎实际渲染输出（1536×864 逻辑 512×288 三倍放大）· 本次改动：多区域地图 + 16-bit 日式像素风重绘（钓手/店主/木桥/圆冠树/钓竿）</div>
 
-<h2>🎨 全画面 AI 重绘（本次改动）</h2>
+<h2>🚶 多区域地图 · 向右探索四个新区域（本次改动）</h2>
+<div class="sub">码头 → 木桥 → 芦苇滩 → 湖心岛 → 深水区：走到屏幕边缘自动切换区域（带冷却防抖、存档记录）。每个区域各有 16-bit 像素画背景（日/夜 ×4 时段，共 25 张编译期内嵌）、独立前景地形与鱼群分布；深水区需购小船（$150）才能进入。</div>
+<div class="grid">
+  <div class="card"><img src="shots/area_bridge_day.jpg"><div class="cap"><b>木桥 · 白天</b> 全宽拱形桥面 + 双横栏 + 水中桩倒影</div></div>
+  <div class="card night"><img src="shots/area_bridge_night.jpg"><div class="cap"><b>木桥 · 夜晚</b><span class="tag">AI 夜景</span></div></div>
+  <div class="card"><img src="shots/area_reed_day.jpg"><div class="cap"><b>芦苇滩 · 白天</b> 泥岸水洼 + 摇曳芦苇香蒲</div></div>
+  <div class="card night"><img src="shots/area_reed_night.jpg"><div class="cap"><b>芦苇滩 · 夜晚</b><span class="tag">AI 夜景</span></div></div>
+  <div class="card"><img src="shots/area_isle_day.jpg"><div class="cap"><b>湖心岛 · 白天</b> 沙滩贝壳海星 + 湿沙浪线</div></div>
+  <div class="card night"><img src="shots/area_isle_night.jpg"><div class="cap"><b>湖心岛 · 夜晚</b><span class="tag">AI 夜景</span></div></div>
+  <div class="card"><img src="shots/area_deep_day.jpg"><div class="cap"><b>深水区 · 白天</b> 乘小船出海（需购船）</div></div>
+  <div class="card night"><img src="shots/area_deep_night.jpg"><div class="cap"><b>深水区 · 夜晚</b><span class="tag">AI 夜景</span></div></div>
+</div>
+
+<h2>🎨 16-bit 日式像素风重绘 · 草帽钓手 / 鲜鱼市场店主 / 钓竿全程可见（本次改动）</h2>
+<div class="sub">角色从 Minecraft 体素小人重绘为干净色块的 16-bit 日式像素风：玩家=草帽+橙围巾钓手（走路摆臂/待机呼吸眨眼/钓鱼抬臂），店主=白毛巾头带+圆眼镜+八字胡的鲜鱼市场大叔（藏青法被+白围裙，手臂搭木柜台）；钓竿全程握在手里——走路/待机斜扛肩后，钓鱼指向水面（竿梢+握把缠带）；背景树改三段色圆冠树，栈桥换 16-bit 木板桥。</div>
+<div class="grid">
+  <div class="card"><img src="shots/04_play_day.jpg"><div class="cap"><b>码头 · 草帽钓手</b> 钓竿斜扛肩后 + 圆冠树 + 木板栈桥</div></div>
+  <div class="card"><img src="shots/12_walk.jpg"><div class="cap"><b>行走动画</b> 摆臂摆腿 + 围巾飘动 + 肩后钓竿</div></div>
+  <div class="card"><img src="shots/07_waiting.jpg"><div class="cap"><b>等待咬钩</b> 双臂抬向握把，竿梢指向水面</div></div>
+  <div class="card"><img src="shots/06_casting.jpg"><div class="cap"><b>抛竿</b> 竿身+亮色脊线+金色竿梢</div></div>
+  <div class="card"><img src="shots/13_shop_en.jpg"><div class="cap"><b>新店主 · 鲜鱼市场大叔</b> 毛巾头带/圆眼镜/八字胡/法被围裙</div></div>
+  <div class="card"><img src="shots/14_shop_cn.jpg"><div class="cap"><b>商店 · 中文</b> 木柜台 + 碎冰 + 展示鱼</div></div>
+</div>
+
+<h2>🖼️ 全画面 AI 重绘（上轮改动）</h2>
 <div class="sub">游戏内全部背景图改由 AI 像素画绘制：湖景四时段（水线对齐 y=150）、标题、风暴/鱼竿/码头剧情 CG、商店内景，共 9 张；编译期内嵌（单 exe 交付），不做任何高光/阴影后处理，保持原汁像素感。</div>
 <div class="grid">
   <div class="card"><img src="shots/old_04_play_day.jpg"><div class="cap"><b style="color:#e06060">旧版 · 白天湖景</b> 程序化体素绘制</div></div>
@@ -37,12 +61,20 @@
   <div class="card"><img src="shots/13_shop_en.jpg"><div class="cap"><b style="color:#60c060">新版 · 商店</b> AI 内景 + 店主/菜单叠加</div></div>
 </div>
 
-<h2>🖼️ AI 原始像素画（512×288 · 48 色量化 · 编译期内嵌）</h2>
+<h2>🖼️ AI 原始像素画（512×288 · 48 色量化 · 编译期内嵌 · 共 25 张）</h2>
 <div class="grid">
-  <div class="card"><img src="aibg/day.png"><div class="cap"><b>day</b> 白天湖景</div></div>
-  <div class="card"><img src="aibg/dawn.png"><div class="cap"><b>dawn</b> 黎明</div></div>
-  <div class="card"><img src="aibg/dusk.png"><div class="cap"><b>dusk</b> 黄昏</div></div>
-  <div class="card night"><img src="aibg/night.png"><div class="cap"><b>night</b> 夜晚</div></div>
+  <div class="card"><img src="aibg/day.png"><div class="cap"><b>day</b> 码头 · 白天</div></div>
+  <div class="card"><img src="aibg/dawn.png"><div class="cap"><b>dawn</b> 码头 · 黎明</div></div>
+  <div class="card"><img src="aibg/dusk.png"><div class="cap"><b>dusk</b> 码头 · 黄昏</div></div>
+  <div class="card night"><img src="aibg/night.png"><div class="cap"><b>night</b> 码头 · 夜晚</div></div>
+  <div class="card"><img src="aibg/bridge_day.png"><div class="cap"><b>bridge_day</b> 木桥 · 白天 <span class="tag">新增</span></div></div>
+  <div class="card night"><img src="aibg/bridge_night.png"><div class="cap"><b>bridge_night</b> 木桥 · 夜晚 <span class="tag">新增</span></div></div>
+  <div class="card"><img src="aibg/reed_day.png"><div class="cap"><b>reed_day</b> 芦苇滩 · 白天 <span class="tag">新增</span></div></div>
+  <div class="card night"><img src="aibg/reed_night.png"><div class="cap"><b>reed_night</b> 芦苇滩 · 夜晚 <span class="tag">新增</span></div></div>
+  <div class="card"><img src="aibg/isle_day.png"><div class="cap"><b>isle_day</b> 湖心岛 · 白天 <span class="tag">新增</span></div></div>
+  <div class="card night"><img src="aibg/isle_night.png"><div class="cap"><b>isle_night</b> 湖心岛 · 夜晚 <span class="tag">新增</span></div></div>
+  <div class="card"><img src="aibg/deep_day.png"><div class="cap"><b>deep_day</b> 深水区 · 白天 <span class="tag">新增</span></div></div>
+  <div class="card night"><img src="aibg/deep_night.png"><div class="cap"><b>deep_night</b> 深水区 · 夜晚 <span class="tag">新增</span></div></div>
   <div class="card"><img src="aibg/storm.png"><div class="cap"><b>storm</b> 风暴（序章）</div></div>
   <div class="card"><img src="aibg/title.png"><div class="cap"><b>title</b> 标题画</div></div>
   <div class="card"><img src="aibg/pier.png"><div class="cap"><b>pier</b> 码头（捏脸/序章）</div></div>
@@ -107,6 +139,6 @@
   <div class="card"><img src="shots/16_bag_cn.jpg"><div class="cap"><b>背包 · 中文</b> 全 10 种鱼图鉴</div></div>
 </div>
 
-<div class="sub" style="margin-top:24px">生成于 SELFTEST 自动化渲染 · 26 张全场景 · 其余（英文版/更多序章）在 shots/ 目录</div>
+<div class="sub" style="margin-top:24px">生成于 SELFTEST 自动化渲染 · 33 张全场景（含 8 张新区域）· 其余（英文版/更多序章）在 shots/ 目录</div>
 </body>
 </html>
