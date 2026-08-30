@@ -1,0 +1,10 @@
+/workspace/sdl32-build/CMakeFiles/sdl_headers_copy.dir
+/workspace/sdl32-build/CMakeFiles/SDL2main.dir
+/workspace/sdl32-build/CMakeFiles/SDL2-static.dir
+/workspace/sdl32-build/CMakeFiles/uninstall.dir
+/workspace/sdl32-build/CMakeFiles/edit_cache.dir
+/workspace/sdl32-build/CMakeFiles/rebuild_cache.dir
+/workspace/sdl32-build/CMakeFiles/list_install_components.dir
+/workspace/sdl32-build/CMakeFiles/install.dir
+/workspace/sdl32-build/CMakeFiles/install/local.dir
+/workspace/sdl32-build/CMakeFiles/install/strip.dir

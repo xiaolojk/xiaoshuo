@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PixelLakeHeart — 游戏截屏</title>
+<style>
+  :root{ color-scheme:dark; }
+  *{ box-sizing:border-box; }
+  body{ margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; background:#0e1420; color:#e8eef6; line-height:1.6; }
+  .wrap{ max-width:1200px; margin:0 auto; padding:28px 20px 60px; }
+  h1{ font-size:26px; margin:0 0 4px; }
+  .sub{ color:#8fa3b8; font-size:14px; margin-bottom:28px; }
+  h2{ font-size:20px; margin:34px 0 14px; padding-top:6px; border-top:1px solid #223449; }
+  .grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:16px; }
+  .card{ background:#141d2e; border:1px solid #223449; border-radius:10px; overflow:hidden; }
+  .card img{ width:100%; display:block; aspect-ratio:16/9; object-fit:cover; background:#0a1018; }
+  .cap{ padding:9px 12px; font-size:13px; color:#b7c6d8; }
+  .cap b{ color:#5fd38f; }
+  .tag{ display:inline-block; margin-left:6px; font-size:11px; color:#7f93a9; background:#0e1726; border:1px solid #223449; border-radius:4px; padding:1px 6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>PixelLakeHeart — 游戏实时截屏</h1>
+  <div class="sub">游戏引擎实际渲染输出（1536×864，逻辑 512×288 三倍整数放大）· 本次更新：<b>背景更细腻</b>（512×288 直接 BOX 采样，像素颗粒感减半）、<b>经典 SPOT 文字 HUD 回归</b>、16-bit 日式角色与五区域大地图保留</div>
+
+  <h2>🗺️ 多区域大地图 · 向右走遍全湖</h2>
+  <div class="sub">玩家走到画面右缘即前往下一区域（左缘返回）：码头 → 木桥 → 芦苇滩 → 湖心岛 → 深水区（深水需先买 $150 小船）。HUD 右上显示 <b>SPOT:当前位置</b>，水面左下角为当前区域标签，右下角显示深水乘船状态。</div>
+  <div class="grid">
+    <div class="card"><img src="shots/04_play_day.jpg"><div class="cap"><b>① 码头</b> 草地 + 木板栈桥，HUD 显示 SPOT:PIER，水线绿色区域标签<span class="tag">起点</span></div></div>
+    <div class="card"><img src="shots/19_bridge.jpg"><div class="cap"><b>② 木桥（全新造型）</b> 全宽拱形桥面 + 双横栏栏杆，桥下水中支柱<span class="tag">新桥</span></div></div>
+    <div class="card"><img src="shots/20_reed.jpg"><div class="cap"><b>③ 芦苇滩</b> 泥岸水洼 + 随风摇摆的芦苇香蒲丛<span class="tag">新场景</span></div></div>
+    <div class="card"><img src="shots/21_isle.jpg"><div class="cap"><b>④ 湖心岛</b> 沙滩 + 贝壳海星点缀，湿沙浪线起伏<span class="tag">新场景</span></div></div>
+    <div class="card"><img src="shots/17_boat_deep.jpg"><div class="cap"><b>⑤ 深水区 · 乘船</b> 玩家站在自己的小船上，HUD 显示"位置:深水区"<span class="tag">需小船</span></div></div>
+    <div class="card"><img src="shots/18_no_boat_wall.jpg"><div class="cap"><b>没船 · 湖心岛右缘</b> 走到右缘会被拦下，提示买小船($150)才能出海<span class="tag">门槛</span></div></div>
+  </div>
+
+  <h2>🎣 全新角色 · 16-bit 日式像素小人</h2>
+  <div class="sub">玩家换为戴草帽、穿橙色钓鱼马甲的日式像素钓手（大头小身、干净色块、两段明暗）；商店老板换为白毛巾头带 + 圆眼镜 + 八字胡的鲜鱼市场大叔。</div>
+  <div class="grid">
+    <div class="card"><img src="shots/12_walk.jpg"><div class="cap"><b>新玩家造型</b> 草帽 + 橙马甲钓手，走路摆臂动画<span class="tag">新人物</span></div></div>
+    <div class="card"><img src="shots/06_casting.jpg"><div class="cap"><b>抛竿姿势</b> 双手握竿，鱼线划出抛物线<span class="tag">新人物</span></div></div>
+    <div class="card"><img src="shots/13_shop_en.jpg"><div class="cap"><b>新商店老板</b> 毛巾头带 + 圆眼镜 + 八字胡，藏青法被白围裙<span class="tag">新老板</span></div></div>
+    <div class="card"><img src="shots/14_shop_cn.jpg"><div class="cap"><b>商店（中文）</b> "码头商店"，老板隔柜台搭话<span class="tag">新老板</span></div></div>
+  </div>
+
+  <h2>🌗 昼夜四时段 · 每个区域独立背景</h2>
+  <div class="sub">五个区域 × 白天/黎明/黄昏/夜晚共 20 张 AI 像素背景，按区域 + 时间自动切换。</div>
+  <div class="grid">
+    <div class="card"><img src="shots/04b_play_dawn.jpg"><div class="cap"><b>黎明</b> 码头<span class="tag">timeH=6.5</span></div></div>
+    <div class="card"><img src="shots/04c_play_dusk.jpg"><div class="cap"><b>黄昏</b> 码头<span class="tag">timeH=17.5</span></div></div>
+    <div class="card"><img src="shots/05_play_night.jpg"><div class="cap"><b>夜晚</b> 天空/水面/角色/水下游鱼都清晰可见<span class="tag">提亮</span></div></div>
+    <div class="card"><img src="shots/07_waiting.jpg"><div class="cap"><b>等待咬钩</b> 鱼缓缓游向浮标<span class="tag">动态</span></div></div>
+  </div>
+
+  <h2>🐟 钓鱼流程</h2>
+  <div class="grid">
+    <div class="card"><img src="shots/08_nibble.jpg"><div class="cap"><b>咬钩</b> 浮标抖动下沉</div></div>
+    <div class="card"><img src="shots/09_catch.jpg"><div class="cap"><b>渔获画面</b> 64×64 手绘像素鱼<span class="tag">英文</span></div></div>
+    <div class="card"><img src="shots/10_catch_cn.jpg"><div class="cap"><b>渔获画面（中文）</b> "捕获 XX"</div></div>
+    <div class="card"><img src="shots/11b_reel_hard.jpg"><div class="cap"><b>收竿 · 传说鱼</b> 小绿区快移标记<span class="tag">高难</span></div></div>
+  </div>
+
+  <h2>📘 鱼类图鉴 · 十种鱼各归各位</h2>
+  <div class="grid">
+    <div class="card"><img src="shots/16_bag_cn.jpg"><div class="cap"><b>渔夫日志（中文）</b> 鲤鱼/鲈鱼/银鲤/鲶鱼/大口鲈/蓝鳃/鲑鱼/金鳟/电鳗/湖龙<span class="tag">图鉴</span></div></div>
+    <div class="card"><img src="shots/15_bag_en.jpg"><div class="cap"><b>Fisherman's Log（英文）</b> 同十种鱼，英文名<span class="tag">图鉴</span></div></div>
+  </div>
+
+  <h2>🏠 标题 / 捏脸 / 开场</h2>
+  <div class="grid">
+    <div class="card"><img src="shots/01_title_en.jpg"><div class="cap"><b>标题（英文）</b></div></div>
+    <div class="card"><img src="shots/02_title_cn.jpg"><div class="cap"><b>标题（中文）</b></div></div>
+    <div class="card"><img src="shots/03_custom_en.jpg"><div class="cap"><b>捏脸</b> 肤色/发型/发色/上衣/裤色<span class="tag">自定义</span></div></div>
+    <div class="card"><img src="shots/intro_0.jpg"><div class="cap"><b>开场 CG</b> 剧情幻灯<span class="tag">剧情</span></div></div>
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,1 @@
+-I"/workspace/sdl32-build/include" -I"/workspace/sdl32-build/include/SDL2" -I"/workspace/sdl32-build/include-config-/SDL2" -I"/workspace/sdl32-build/include-config-"
