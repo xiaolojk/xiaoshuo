@@ -1282,7 +1282,7 @@ static int roll_fish(void){
 static void cast_line(void){
   spot=area_spot();
   plannedFish=roll_fish();
-  bobX=(float)playerX; bobY=170+rndf()*28+spot*8;
+  bobX=(float)playerX; bobY=180+rndf()*22+spot*8;   /* 180起: 避开栈桥木板带(164-178), 浮标总落在水面 */
   phase=PH_CAST; phaseT=0; castT=0.5f;
   pAnim=PA_CAST;
 }
@@ -1832,6 +1832,8 @@ static int lake_scene_now(void){
 }
 static void draw_play(void){
   draw_cg_pan(lake_scene_now(),0);   /* AI 像素画湖景(整幅天空+水面), 按区域+时段选图 */
+  /* 咬钩鱼在水下层: 先于前景/玩家绘制, 否则会叠在栈桥/船/玩家身上穿模 */
+  if(phase==PH_WAIT||phase==PH_NIBBLE) draw_bite_fish();
   draw_ambient();            /* fish are ALWAYS visible cruising the lake */
   draw_foreground();
   /* 上一版水线区域标签: 短下划线 + 文字 (左: 当前区域; 右: 深水状态) */
@@ -1845,8 +1847,6 @@ static void draw_play(void){
   int drawLine=(phase==PH_CAST||phase==PH_WAIT||phase==PH_NIBBLE||phase==PH_MISS||phase==PH_CATCHMSG);
   if(drawLine) draw_player();
   else draw_player();
-  /* Dave-style: fish approaches bobber while waiting, strikes on nibble */
-  if(phase==PH_WAIT||phase==PH_NIBBLE) draw_bite_fish();
   if(phase==PH_CATCHMSG&&plannedFish>=0){
     render_fish(plannedFish,0); blit_rgba((IN_W-64)/2,96,1,fsp,64,64);
   }
