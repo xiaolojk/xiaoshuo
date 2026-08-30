@@ -23,17 +23,17 @@
 <body>
 <div class="wrap">
   <h1>PixelLakeHeart — 游戏实时截屏</h1>
-  <div class="sub">游戏引擎实际渲染输出（1536×864，逻辑 512×288 三倍整数放大）· 本次更新：<b>全新 16-bit 日式角色</b>（草帽钓手 + 鲜鱼市场大叔老板）、<b>五区域大地图</b>（向右走自由探索）、<b>全新木桥</b></div>
+  <div class="sub">游戏引擎实际渲染输出（1536×864，逻辑 512×288 三倍整数放大）· 本次更新：<b>背景更细腻</b>（512×288 直接 BOX 采样，像素颗粒感减半）、<b>经典 SPOT 文字 HUD 回归</b>、16-bit 日式角色与五区域大地图保留</div>
 
   <h2>🗺️ 多区域大地图 · 向右走遍全湖</h2>
-  <div class="sub">玩家走到画面右缘即前往下一区域（左缘返回）：码头 → 木桥 → 芦苇滩 → 湖心岛 → 深水区（深水需先买 $150 小船）。左上木牌显示当前区域，临近右缘会出现去向提示。</div>
+  <div class="sub">玩家走到画面右缘即前往下一区域（左缘返回）：码头 → 木桥 → 芦苇滩 → 湖心岛 → 深水区（深水需先买 $150 小船）。HUD 右上显示 <b>SPOT:当前位置</b>，水面左下角为当前区域标签，右下角显示深水乘船状态。</div>
   <div class="grid">
-    <div class="card"><img src="shots/04_play_day.jpg"><div class="cap"><b>① 码头</b> 草地 + 木板栈桥，左上角区域木牌"码头"<span class="tag">起点</span></div></div>
+    <div class="card"><img src="shots/04_play_day.jpg"><div class="cap"><b>① 码头</b> 草地 + 木板栈桥，HUD 显示 SPOT:PIER，水线绿色区域标签<span class="tag">起点</span></div></div>
     <div class="card"><img src="shots/19_bridge.jpg"><div class="cap"><b>② 木桥（全新造型）</b> 全宽拱形桥面 + 双横栏栏杆，桥下水中支柱<span class="tag">新桥</span></div></div>
     <div class="card"><img src="shots/20_reed.jpg"><div class="cap"><b>③ 芦苇滩</b> 泥岸水洼 + 随风摇摆的芦苇香蒲丛<span class="tag">新场景</span></div></div>
     <div class="card"><img src="shots/21_isle.jpg"><div class="cap"><b>④ 湖心岛</b> 沙滩 + 贝壳海星点缀，湿沙浪线起伏<span class="tag">新场景</span></div></div>
-    <div class="card"><img src="shots/17_boat_deep.jpg"><div class="cap"><b>⑤ 深水区 · 乘船</b> 玩家站在自己的小船上，HUD 显示"区域:深水"<span class="tag">需小船</span></div></div>
-    <div class="card"><img src="shots/18_no_boat_wall.jpg"><div class="cap"><b>没船 · 湖心岛右缘</b> 提示"向右走出海去深水"，没船会被拦下并提示买船<span class="tag">门槛</span></div></div>
+    <div class="card"><img src="shots/17_boat_deep.jpg"><div class="cap"><b>⑤ 深水区 · 乘船</b> 玩家站在自己的小船上，HUD 显示"位置:深水区"<span class="tag">需小船</span></div></div>
+    <div class="card"><img src="shots/18_no_boat_wall.jpg"><div class="cap"><b>没船 · 湖心岛右缘</b> 走到右缘会被拦下，提示买小船($150)才能出海<span class="tag">门槛</span></div></div>
   </div>
 
   <h2>🎣 全新角色 · 16-bit 日式像素小人</h2>

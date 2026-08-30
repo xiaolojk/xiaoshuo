@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """AI 图 -> 512x288 像素风 BMP（游戏背景）
-流程: 找水线 -> 裁 16:9 窗口(水线对齐 y=150/288) -> BOX 降到 256x144
-      -> 量化 48 色 -> NEAREST 2x 到 512x288 -> 存 24bit BMP
+流程: 找水线 -> 裁 16:9 窗口(水线对齐 y=150/288) -> BOX 直接采样
+      到 512x288 -> 量化 48 色 -> 存 24bit BMP
 """
 import sys, os
 from PIL import Image
@@ -55,12 +55,10 @@ def convert(src, dst, waterline=None, align=True, debug=False):
         if h2 < h:
             x0 = max(0, (w - w2) // 2)
             im = im.crop((x0, top, x0 + w2, top + h2))
-    # 降到 256x144
-    small = im.resize((SMALL_W, SMALL_H), Image.BOX)
-    # 量化 48 色 (去渐变, 像素感)
-    small = small.quantize(colors=48, method=Image.MEDIANCUT, dither=Image.NONE).convert('RGB')
-    # 2x NEAREST 放大到 512x288
-    big = small.resize((TARGET_W, TARGET_H), Image.NEAREST)
+    # BOX 直接采样到 512x288（比 256x144 再 2x NEAREST 细腻一倍, 像素感更低）
+    big = im.resize((TARGET_W, TARGET_H), Image.BOX)
+    # 量化 48 色 (去渐变, 保留色块感)
+    big = big.quantize(colors=48, method=Image.MEDIANCUT, dither=Image.NONE).convert('RGB')
     big.save(dst, 'BMP')
     print('%s -> %s  waterline_src=%d crop_top=%d' % (os.path.basename(src), os.path.basename(dst), waterline, top))
     return top

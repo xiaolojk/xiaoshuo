@@ -751,13 +751,6 @@ static const char* area_name(int a){
   static const char*CN[AR_N]={"码头","木桥","芦苇滩","湖心岛","深水区"};
   return T(EN[a],CN[a]);
 }
-static const char* area_hint(int a){ /* 进入下一区域的提示 */
-  static const char*EN[AR_N]={"walk right to the bridge","walk right to the reeds",
-    "walk right to the island","walk right to sail deep",""};
-  static const char*CN[AR_N]={"向右走前往木桥","向右走前往芦苇滩",
-    "向右走前往湖心岛","向右走出海去深水",""};
-  return T(EN[a],CN[a]);
-}
 /* 各区域的水域深度(决定鱼群): 码头按站位分岸边/桥面, 其余区域固定 */
 static int area_spot(void){
   switch(area){
@@ -1311,14 +1304,12 @@ static void update_play(float dt){
         areaCd=1.2f;
       }else{
         area++; playerX=24; areaCd=0.6f; spot=area_spot();
-        add_toast(area_name(area));
       }
     }
   }else if(playerX<20){
     playerX=20;
     if(moving&&area>0&&areaCd<=0){
       area--; playerX=IN_W-30; areaCd=0.6f; spot=area_spot();
-      add_toast(area_name(area));
     }
   }
   playerX=clampij(playerX,20,IN_W-24);
@@ -1843,16 +1834,13 @@ static void draw_play(void){
   draw_cg_pan(lake_scene_now(),0);   /* AI 像素画湖景(整幅天空+水面), 按区域+时段选图 */
   draw_ambient();            /* fish are ALWAYS visible cruising the lake */
   draw_foreground();
-  /* 区域木牌(左上 HUD 下): 当前区域名 */
+  /* 上一版水线区域标签: 短下划线 + 文字 (左: 当前区域; 右: 深水状态) */
   {
-    const char*an=area_name(area);
-    Uint32 wood=packrgb(74,52,28);
-    int tw=text_w(an,1);
-    fill(8,44,tw+12,14,wood);
-    fill(8,44,tw+12,1,shade_c(wood,20));
-    fill(8,57,tw+12,1,mulc(wood,150));
-    fill(11,58,3,5,PACKED[C_TRUNK]);   /* 牌柱 */
-    draw_text(14,48,an,PACKED[C_GOLD],1);
+    Uint32 g=PACKED[C_GREEN], r=boat?PACKED[C_GOLD]:PACKED[C_RED];
+    fill(164,181,14,3,g); fill(330,181,14,3,r);
+    draw_text(154,187,area_name(area),g,1);
+    if(boat) draw_text(303,187,T("DEEP:BOAT","深水·乘船"),r,1);
+    else     draw_text(303,187,T("DEEP:NEED BOAT","深水·需船"),r,1);
   }
   int drawLine=(phase==PH_CAST||phase==PH_WAIT||phase==PH_NIBBLE||phase==PH_MISS||phase==PH_CATCHMSG);
   if(drawLine) draw_player();
@@ -1867,13 +1855,8 @@ static void draw_play(void){
   snprintf(b,64,T("LV%d","等%d") ,level); { char bb[64]; snprintf(bb,64,"LV%d",level); draw_text(8,20,bb,PACKED[C_CYAN],1); }
   snprintf(b,64,"%02d:%02d %s",(int)timeH,(int)((timeH-(int)timeH)*60),is_night()?T("NIGHT","夜晚"):T("DAY","白天"));
   draw_text(IN_W-text_w(b,1)-8,6,b,is_night()?PACKED[C_YELLOW]:PACKED[C_WHITE],1);
-  snprintf(b,64,T("AREA:%s","区域:%s"),area_name(area)); draw_text(IN_W-text_w(b,1)-8,20,b,PACKED[C_SILVER],1);
+  snprintf(b,64,T("SPOT:%s","位置:%s"),area_name(area)); draw_text(IN_W-text_w(b,1)-8,20,b,PACKED[C_SILVER],1);
   { const char*bs=T("B:SHOP","B:商店"); draw_text(IN_W-text_w(bs,1)-8,34,bs,PACKED[C_SILVER],1); }
-  /* 临近右缘: 显示下一个区域的去向提示 */
-  if(area<AR_N-1&&playerX>IN_W-120){
-    char h[80]; snprintf(h,80,">> %s",area_hint(area));
-    draw_text(IN_W-text_w(h,1)-8,138,h,PACKED[C_WHITE],1);
-  }
   if(phase==PH_IDLE){
     if(is_night()) center_text(224,T("NIGHT: SPACE TO SLEEP TILL DAWN","夜晚·按空格睡觉到天亮"),PACKED[C_WARN],1);
     else center_text(224,T("SPACE TO CAST","按空格抛竿"),PACKED[C_WHITE],1);
