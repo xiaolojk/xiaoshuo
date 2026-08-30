@@ -2782,6 +2782,29 @@ static void selftest(SDL_Window*win,SDL_Renderer*ren,SDL_Texture*tex){
   for(int i=0;i<10;i++){bag[i]=i;caughtCount[i]=1;}
   lang=0; st_wait(ren,tex,0.3f); st_shot("15_bag_en");
   lang=1; st_wait(ren,tex,0.3f); st_shot("16_bag_cn");
+  /* 12b) 手机移植预览: 触屏虚拟按键在各场景下的样子 */
+  printf("== TOUCH UI TOUR ==\n");
+  touchUI=1; vbOn[0]=vbOn[6]=1;
+  state=ST_PLAY; phase=PH_IDLE; pAnim=PA_IDLE; lang=1; boat=0;
+  timeH=14.0f; area=AR_PIER; playerX=120;
+  st_wait(ren,tex,0.2f); st_shot("t01_pier");
+  area=AR_BRIDGE; playerX=200; spot=1; st_wait(ren,tex,0.2f); st_shot("t02_bridge");
+  area=AR_REED;   playerX=150; spot=0; st_wait(ren,tex,0.2f); st_shot("t03_reed");
+  area=AR_ISLE;   playerX=240; spot=1; st_wait(ren,tex,0.2f); st_shot("t04_isle");
+  area=AR_DEEP;   boat=1; playerX=260; spot=2; st_wait(ren,tex,0.2f); st_shot("t05_deep_boat");
+  area=AR_PIER; playerX=120; boat=0;
+  phase=PH_WAIT; pAnim=PA_WAIT; phaseT=1.2f; bobX=330; bobY=185;
+  plannedFish=6; nibbleDelay=3.0f;
+  st_wait(ren,tex,0.2f); st_shot("t06_wait");
+  phase=PH_NIBBLE; phaseT=0.3f; st_wait(ren,tex,0.15f); st_shot("t07_nibble");
+  state=ST_REEL; pAnim=PA_REEL; plannedFish=0; reelDiff=0; reelTol=3;
+  reelInd=120; reelTarget=150; reelZoneW=86; reelGood=1; reelNeed=3; reelBad=0;
+  st_wait(ren,tex,0.2f); st_shot("t08_reel");
+  state=ST_SHOP; menuSel=1; st_wait(ren,tex,0.2f); st_shot("t09_shop");
+  state=ST_BAG; st_wait(ren,tex,0.2f); st_shot("t10_bag");
+  state=ST_PLAY; phase=PH_IDLE; pAnim=PA_IDLE; timeH=21.0f;
+  st_wait(ren,tex,0.2f); st_shot("t11_night");
+  timeH=14.0f; touchUI=0; vbOn[0]=vbOn[6]=0;
   /* 13) save/load + mod round-trip self-check (SELFTEST builds only) */
   printf("== SAVE/MOD CHECK ==\n");
   coins=1234; xp=77; level=5; day=12; cs_skin=3; bagFill=2; bag[0]=1; bag[1]=9;
