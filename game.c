@@ -5,7 +5,11 @@
    16x16 CJK font, ambient fish schools (Dave-style lake),
    fish-approach bite, no night fishing, integer-scale letterbox
    ============================================================ */
+#if !defined(__ANDROID__)
 #define SDL_MAIN_HANDLED  /* we provide our own entry point on Windows */
+/* Android: 不定义 SDL_MAIN_HANDLED, SDL_main.h 会把 main 宏替换成 SDL_main,
+   否则 SDL 的 nativeRunMain() dlsym("SDL_main") 失败 -> 游戏代码不执行 -> 秒退 */
+#endif
 
 /* ============================================================
    LAN multiplayer: cross-platform unreliable UDP (no external lib)
@@ -1140,6 +1144,11 @@ static void Pline(int ox,int oy,int sc,int x0,int y0,int x1,int y1,Uint32 c){
   int dx=abs(x1-x0),sx=x0<x1?1:-1,dy=-abs(y1-y0),sy=y0<y1?1:-1,er=dx+dy;
   for(;;){ P(ox,oy,sc,x0,y0,1,1,c); if(x0==x1&&y0==y1)break; int e2=2*er; if(e2>=dy){er+=dy;x0+=sx;} if(e2<=dx){er+=dx;y0+=sy;} }
 }
+/* 细线(1逻辑像素, 绝对逻辑坐标): 钓鱼线用 */
+static void line1(int x0,int y0,int x1,int y1,Uint32 c){
+  int dx=abs(x1-x0),sx=x0<x1?1:-1,dy=-abs(y1-y0),sy=y0<y1?1:-1,er=dx+dy;
+  for(;;){ setpix(x0,y0,c); if(x0==x1&&y0==y1)break; int e2=2*er; if(e2>=dy){er+=dy;x0+=sx;} if(e2<=dx){er+=dx;y0+=sy;} }
+}
 /* draw puppet (customizable appearance); returns rod grip via hx,hy
    16-bit 日式像素钓手 (16x24 网格, 侧视朝右): 草帽 + 橙围巾 + 夹克。
    走路双腿摆动/围巾飘, 待机呼吸眨眼, 钓鱼双臂抬向握把 —— 任何姿势
@@ -1354,7 +1363,10 @@ static int roll_fish(void){
 static void cast_line(void){
   spot=area_spot();
   plannedFish=roll_fish();
-  bobX=(float)playerX; bobY=180+rndf()*22+spot*8;   /* 180起: 避开栈桥木板带(164-178), 浮标总落在水面 */
+  /* 抛向前方水面: 距离随竿等级加长, 不再落在自己脚边 */
+  bobX=(float)playerX+96.0f+rndf()*70.0f+rodLevel*14.0f;
+  if(bobX>(float)IN_W-20)bobX=(float)IN_W-20;
+  bobY=180+rndf()*22+spot*8;   /* 180起: 避开栈桥木板带(164-178), 浮标总落在水面 */
   phase=PH_CAST; phaseT=0; castT=0.5f;
   pAnim=PA_CAST;
 }
@@ -1866,32 +1878,63 @@ static void draw_player(void){
   draw_person(ox,oy,sc,anim,pAnimT,&hx,&hy);
   /* rod from grip */
   if(fishing||state==ST_REEL){
-    int gx=ox+hx*sc, gy=oy+hy*sc;
-    float ang;
-    int len;
-    /* bob arc during cast */
-    int drawB=(phase==PH_CAST);
-    int bx,by;
+    int gx=ox+hx*sc, gy=oy+hy*sc;   /* 握竿点(绝对逻辑像素) */
     float cp=0.0f;
-    if(drawB){ cp=1.0f-(castT/0.5f); if(cp<0)cp=0; if(cp>1)cp=1; bx=playerX+(int)((bobX-playerX)*cp); by=(int)bobY+(int)(sinf(3.14159f*cp)*-70.0f); }
-    else { bx=(int)bobX; by=(int)bobY;
+    if(phase==PH_CAST){ cp=1.0f-(castT/0.5f); if(cp<0)cp=0; if(cp>1)cp=1; }
+    /* ---- 竿角: 抛竿 = 后摆->前甩(竿梢永不入水); 平时持竿; 收线压竿 ---- */
+    float ang; int len=36;
+    if(state==ST_REEL){ ang=-0.6f; len=34; }
+    else if(phase==PH_CAST){
+      if(cp<0.35f){ ang=-1.1f-1.2f*(cp/0.35f); }    /* 后摆: -1.1 -> -2.3 举过肩 */
+      else{ float k=(cp-0.35f)/0.65f; k=1.0f-(1.0f-k)*(1.0f-k);   /* 前甩 ease-out */
+            ang=-2.3f+1.85f*k; }                    /* -2.3 -> -0.45 */
+    }
+    else{ ang=-1.1f; /* wait/nibble: -1.05..-1.25 */
+          if(phase==PH_NIBBLE){ ang=-1.05f-0.2f*sinf(phaseT*30); } }
+    int tipx=gx+(int)(cosf(ang)*len*sc), tipy=gy+(int)(sinf(ang)*len*sc);
+    /* Pline 传绝对坐标(原点 0,0): 之前误传 ox,oy, 竿子被平移到画面右下角 */
+    Pline(0,0,sc,gx/sc,gy/sc,tipx/sc,tipy/sc,PACKED[C_ROD]);
+    /* ---- 浮标位置 ---- */
+    int bx,by;
+    if(phase==PH_CAST){
+      if(cp<0.35f){ /* 后摆: 浮标挂在竿梢下晃 */
+        bx=tipx+(int)(sinf(pAnimT*14.0f)*2.0f);
+        by=tipy+14+(int)(sinf(pAnimT*10.0f)*2.0f);
+      }else{        /* 前甩: 从后摆竿梢处抛物线飞向落点 */
+        float p=(cp-0.35f)/0.65f; if(p<0)p=0; if(p>1)p=1;
+        int lx0=gx+(int)(cosf(-2.3f)*len*sc), ly0=gy+(int)(sinf(-2.3f)*len*sc)+14;
+        bx=lx0+(int)((bobX-(float)lx0)*p);
+        by=ly0+(int)((bobY-(float)ly0)*p)-(int)(sinf(3.14159f*p)*34.0f);
+      }
+    } else { bx=(int)bobX; by=(int)bobY;
       if(phase==PH_NIBBLE){ /* Dave-style: bobber jiggles + dips when biting */
         by+=(int)(sinf(phaseT*26.0f)*2.0f)+1; bx+=(int)(sinf(phaseT*17.0f)*1.0f); } }
-    if(state==ST_REEL){ ang=-0.6f; len=34; }
-    else { ang=(phase==PH_CAST)?(1.2f-1.8f*cp):(-1.1f); /* wait:nibble: -1.05..-1.25 */
-           if(phase==PH_NIBBLE){ ang=-1.05f-0.2f*sinf(phaseT*30); }
-           len=36; }
-    int tipx=gx+(int)(cosf(ang)*len*sc), tipy=gy+(int)(sinf(ang)*len*sc);
-    Pline(ox,oy,sc,gx/sc,gy/sc,tipx/sc,tipy/sc,PACKED[C_ROD]);
-    /* line from tip to bob */
-    int ly0=(int)tipy, lx0=(int)tipx;
-    for(int y=ly0;y<by;y++) setpix(lx0,y,PACKED[C_LINE]);
+    /* ---- 线: 飞行中拉直; 落水后从竿梢垂到浮标 ---- */
+    if(phase==PH_CAST){
+      line1(tipx,tipy,bx,by,PACKED[C_LINE]);
+    }else{
+      int mx=(tipx+bx)/2, my=(tipy+by)/2+10;          /* 下垂中点 */
+      if(phase==PH_NIBBLE){ my+=3+(int)(sinf(phaseT*20.0f)*2.0f); }  /* 鱼在拉线 */
+      line1(tipx,tipy,mx,my,PACKED[C_LINE]);
+      line1(mx,my,bx,by-1,PACKED[C_LINE]);
+      /* 刚落水的涟漪 */
+      if(phase==PH_WAIT&&phaseT<0.35f){
+        int wd=3+(int)(phaseT*26.0f);
+        int al=(int)(200.0f*(1.0f-phaseT/0.35f));
+        fill_a(bx-wd,by+2,2,1,PACKED[C_WHITE],al);
+        fill_a(bx+wd-2,by+2,2,1,PACKED[C_WHITE],al);
+        fill_a(bx-wd/2,by+3,1,1,PACKED[C_WHITE],al/2);
+        fill_a(bx+wd/2,by+3,1,1,PACKED[C_WHITE],al/2);
+      }
+    }
     /* bobber */
     fill(bx-3,by,7,3,PACKED[C_FLOATA]);
     fill(bx-2,by+1,5,1,PACKED[C_FLOATB]);
   } else {
-    /* idle no rod, but still store */
-    (void)hx;(void)hy;
+    /* 走路/待机: 竿斜扛肩后, 竿不离手 */
+    int gx=ox+hx*sc, gy=oy+hy*sc;
+    int tipx=gx+(int)(cosf(-2.6f)*36*sc), tipy=gy+(int)(sinf(-2.6f)*36*sc);
+    Pline(0,0,sc,gx/sc,gy/sc,tipx/sc,tipy/sc,PACKED[C_ROD]);
   }
 }
 /* 按当前时刻+区域挑选 AI 湖景背景图 (每区域4张: day/dawn/dusk/night) */
