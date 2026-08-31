@@ -2838,9 +2838,19 @@ static void selftest(SDL_Window*win,SDL_Renderer*ren,SDL_Texture*tex){
 }
 #endif
 
+/* Android 诊断日志: logcat 里 filter "PLH" 即可看到启动各阶段埋点 */
+#ifdef __ANDROID__
+#include <android/log.h>
+#define ALOG(...) __android_log_print(ANDROID_LOG_INFO,"PLH",__VA_ARGS__)
+#else
+#define ALOG(...) do{}while(0)
+#endif
+
 int main(int argc,char*argv[]){
   (void)argc;(void)argv;
-  if(SDL_Init(SDL_INIT_VIDEO)<0)return 1;
+  ALOG("startup");
+  if(SDL_Init(SDL_INIT_VIDEO)<0){ALOG("SDL_Init FAIL: %s",SDL_GetError());return 1;}
+  ALOG("SDL_Init ok");
 #if defined(__ANDROID__)||defined(__IPHONEOS__)
   touchUI=1;   /* 移动平台默认显示虚拟按键 */
 #endif
@@ -2849,16 +2859,25 @@ int main(int argc,char*argv[]){
   SDL_SetHint(SDL_HINT_MOUSE_TOUCH_EVENTS,"0");
   SDL_Window*win=SDL_CreateWindow("PIXEL LAKE HEART - A Low-end Fishing Game",
       SDL_WINDOWPOS_CENTERED,SDL_WINDOWPOS_CENTERED,WIND_W,WIND_H,SDL_WINDOW_RESIZABLE);
-  if(!win){SDL_Quit();return 1;}
+  if(!win){ALOG("CreateWindow FAIL: %s",SDL_GetError());SDL_Quit();return 1;}
+  ALOG("window ok");
   SDL_Renderer*ren=SDL_CreateRenderer(win,-1,0);
-  if(!ren){SDL_Surface*ws=SDL_GetWindowSurface(win);ren=SDL_CreateSoftwareRenderer(ws);}
-  if(!ren){SDL_DestroyWindow(win);SDL_Quit();return 1;}
+  if(!ren){ALOG("accelerated renderer FAIL, try software: %s",SDL_GetError());
+    SDL_Surface*ws=SDL_GetWindowSurface(win);ren=SDL_CreateSoftwareRenderer(ws);}
+  if(!ren){ALOG("renderer FAIL: %s",SDL_GetError());SDL_DestroyWindow(win);SDL_Quit();return 1;}
+  ALOG("renderer ok");
   screen=SDL_CreateRGBSurfaceWithFormat(0,PH_W,PH_H,32,SDL_PIXELFORMAT_ARGB8888);
-  if(!screen){SDL_DestroyRenderer(ren);SDL_DestroyWindow(win);SDL_Quit();return 1;}
+  if(!screen){ALOG("surface FAIL: %s",SDL_GetError());SDL_DestroyRenderer(ren);SDL_DestroyWindow(win);SDL_Quit();return 1;}
+  ALOG("surface ok");
   SDL_Texture*tex=SDL_CreateTexture(ren,SDL_PIXELFORMAT_ARGB8888,SDL_TEXTUREACCESS_STREAMING,PH_W,PH_H);
+  if(!tex){ALOG("texture FAIL: %s",SDL_GetError());
+    SDL_FreeSurface(screen);SDL_DestroyRenderer(ren);SDL_DestroyWindow(win);SDL_Quit();return 1;}
+  ALOG("texture ok %dx%d",PH_W,PH_H);
   for(int i=0;i<NPAL;i++)PACKED[i]=SDL_MapRGBA(screen->format,PALRGB[i].r,PALRGB[i].g,PALRGB[i].b,255);
   prep_cg();
+  ALOG("cg ok");
   prep_fishspr();
+  ALOG("sprites ok");
   seed_rng((unsigned)SDL_GetTicks()^((unsigned)time(NULL)<<8));
   ambient_init();
   shop_links();
@@ -2872,6 +2891,7 @@ int main(int argc,char*argv[]){
 
   load_game();
   mod_scan_and_load();
+  ALOG("save+mods ok, entering loop");
 
   int running=1;Uint32 tprev=SDL_GetTicks();
   while(running){

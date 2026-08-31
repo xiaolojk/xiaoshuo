@@ -31,20 +31,20 @@ $BT/aapt2 compile --dir $APP/src/main/res -o $OUT/res.zip
 $BT/aapt2 link -o $OUT/unsigned.apk -I $PLATFORM \
   --manifest $APP/src/main/AndroidManifest.xml \
   --min-sdk-version 19 --target-sdk-version 34 \
-  --version-code 1 --version-name 1.0 \
+  --version-code 2 --version-name 1.1 \
   $OUT/res.zip
 
 echo "== 5/5 塞入 dex/so, 对齐并签名 =="
 cd $OUT
 zip -q -j unsigned.apk classes.dex   # dex 在 apk 根目录
+mkdir -p lib
 for abi in arm64-v8a armeabi-v7a; do
   if [ -d ../app/libs/$abi ]; then
-    cd ../app/libs/$abi
-    zip -q $OUT/unsigned.apk lib/$abi/* 2>/dev/null || \
-      { mkdir -p $OUT/lib/$abi && cp *.so $OUT/lib/$abi/ && cd $OUT && zip -q -r unsigned.apk lib; }
-    cd $OUT
+    mkdir -p lib/$abi
+    cp ../app/libs/$abi/*.so lib/$abi/
   fi
 done
+zip -q -r unsigned.apk lib
 $BT/zipalign -f 4 unsigned.apk aligned.apk
 if [ ! -f debug.keystore ]; then
   keytool -genkeypair -keystore debug.keystore -storepass android -keypass android \
