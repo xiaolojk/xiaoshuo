@@ -712,7 +712,7 @@ static void darkall(int a){
 }
 
 /* ---------- game state ---------- */
-enum{ST_TITLE,ST_CUSTOM,ST_INTRO,ST_PLAY,ST_REEL,ST_SHOP,ST_BAG,ST_LANMENU,ST_QUIT};
+enum{ST_TITLE,ST_CUSTOM,ST_INTRO,ST_PLAY,ST_REEL,ST_SHOP,ST_BAG,ST_LANMENU,ST_QUEST,ST_QUIT};
 
 /* ---------- LAN multiplayer forward decls (defined later, after scenery) ---------- */
 static void net_update(float dt);
@@ -751,6 +751,36 @@ static float introT; static int slide=-1; static int menuSel=0;
 /* mod multipliers (set by mods/*.mod, default 1x) */
 static int modCoinMul=1, modXpMul=1;
 
+/* ============ QUEST SYSTEM: 主线(爷爷的传说-湖心之心) + 每日悬赏 ============
+   type: QT_ANY=钓任意鱼  QT_SPECIES=集齐鱼种数  QT_FISH=钓指定鱼
+         QT_ROD=竿等级达到  QT_BOAT=拥有小船  QT_SELL=卖鱼赚钱(仅悬赏) */
+enum{QT_ANY,QT_SPECIES,QT_FISH,QT_ROD,QT_BOAT,QT_SELL};
+typedef struct{ int type,a,need,rc,rx; const char*en,*cn,*den,*dcn; }QUEST;
+static QUEST MAINQ[]={
+ {QT_ANY,    0,3,  15, 5,"FIRST CATCH","初试身手",
+  "PROVE YOURSELF: CATCH 3 FISH.","爷爷笔记第一页:先钓上3条鱼,让我看看你的本事。"},
+ {QT_SPECIES,0,4,  25, 8,"FOUR FACES","四种面孔",
+  "FILL 4 SPECIES IN YOUR LOG.","湖里的居民可不止一种——集齐4种鱼吧。"},
+ {QT_ROD,    1,1,  20, 8,"CRAFTSMAN","工欲善其事",
+  "BUY A BETTER ROD AT THE SHOP.","工欲善其事,必先利其器——去商店买根更好的鱼竿。"},
+ {QT_FISH,   3,1,  30,10,"THE WHISKERED ONE","桥下鲶影",
+  "CATCH A CATFISH.","木桥之下有暗影游动…钓上1条鲶鱼。"},
+ {QT_BOAT,   0,1,  40,10,"SET SAIL","深蓝召唤",
+  "SAVE UP AND BUY THE BOAT ($150).","攒钱买下那条小船($150)——深水在召唤。"},
+ {QT_FISH,   6,1,  50,12,"DEEP RUNNER","深水鲑影",
+  "CATCH A SALMON IN DEEP WATER.","深水之中银光一闪——钓上1条鲑鱼。"},
+ {QT_FISH,   8,1,  80,15,"THUNDER","电光石火",
+  "CATCH AN ELECTRIC EEL.","传说湖底沉睡着雷霆——钓上1条电鳗。"},
+ {QT_FISH,   9,1, 200,30,"LAKE HEART","湖心之心",
+  "CATCH THE LAKE DRAGON.","湖的守护者终于现身了——钓上湖龙,兑现爷爷的承诺!"},
+};
+#define NMQ ((int)(sizeof(MAINQ)/sizeof(MAINQ[0])))
+static int questIdx=0,questProg=0,mqDone=0;
+/* 每日悬赏: 3个随机任务, 天亮自动刷新 (id=模板号 a=鱼种 need=目标 p=进度) */
+static int dailyDay=0;
+static int dailyId[3]={-1,-1,-1},dailyA[3],dailyN[3]={1,1,1},dailyP[3],dailyDone[3];
+static const int DQ_RC[5]={25,20,35,30,55};   /* 模板奖励金币 */
+
 /* ============ 多区域地图: 玩家向右走到屏幕边缘就进入下一区域 ============
    码头(起点) -> 木桥 -> 芦苇滩 -> 湖心岛 -> 深水区(需小船)
    每个区域有独立 AI 背景图(按时段切换) + 独立前景装饰 + 鱼群水域 */
@@ -773,15 +803,21 @@ static int area_spot(void){
   }
 }
 
-typedef struct{Uint8 space,accept,back,up,down,e,b,left,right;}PRESS;
+typedef struct{Uint8 space,accept,back,up,down,e,b,q,left,right;}PRESS;
 static PRESS press;
+
+/* ---------- quest system forward decls (defined after bag UI) ---------- */
+static void quest_on_catch(int fi);
+static void quest_on_sell(int sum);
+static void quest_tick(void);
+static void quest_cur(int*cur,int*need);
 
 /* ============ MOBILE: 触屏虚拟按键 (多点触控) ============
    布局用逻辑坐标(512x288), 拇指可达的左右下角, 半透明绘制。
    收到首个触摸事件即自动启用 (Android/iOS/触屏笔记本通用)。
    ◀▶ 按住持续移动; 其余按钮一次触发, 映射到 press.*。 */
-enum{ VB_L=1,VB_R=2,VB_U=4,VB_D=8,VB_A=16,VB_B=32,VB_E=64,VB_SH=128 };
-typedef struct{ int x,y,w,h; const char*lab; Uint8 mask; }VBTN;
+enum{ VB_L=1,VB_R=2,VB_U=4,VB_D=8,VB_A=16,VB_B=32,VB_E=64,VB_SH=128,VB_Q=256 };
+typedef struct{ int x,y,w,h; const char*lab; Uint16 mask; }VBTN;
 static const VBTN VBTNS[]={
   {  8,246,42,38,"<",   VB_L},
   { 58,246,42,38,">",   VB_R},
@@ -791,6 +827,7 @@ static const VBTN VBTNS[]={
   {398,250,46,34,"B",   VB_B},
   {396,206,50,34,"BAG", VB_E},
   {448,206,54,34,"SHOP",VB_SH},
+  {334,206,56,34,"LOG", VB_Q},
 };
 #define NVB ((int)(sizeof(VBTNS)/sizeof(VBTNS[0])))
 static SDL_FingerID vbFid[NVB];   /* 每个按钮当前被哪根手指按住 (0=无) */
@@ -817,6 +854,7 @@ static void vb_press(int i){
     case VB_B:  press.back=1;  break;
     case VB_E:  press.e=1;     break;
     case VB_SH: press.b=1;     break;
+    case VB_Q:  press.q=1;     break;
   }
 }
 static void vb_release(int i){
@@ -882,6 +920,15 @@ static void save_game(void){
   fwrite(&cs_pants,sizeof(int),1,f);
   fwrite(&lang,sizeof(int),1,f);
   fwrite(&area,sizeof(int),1,f);
+  fwrite(&questIdx,sizeof(int),1,f);
+  fwrite(&questProg,sizeof(int),1,f);
+  fwrite(&mqDone,sizeof(int),1,f);
+  fwrite(&dailyDay,sizeof(int),1,f);
+  fwrite(dailyId,sizeof(int),3,f);
+  fwrite(dailyA,sizeof(int),3,f);
+  fwrite(dailyN,sizeof(int),3,f);
+  fwrite(dailyP,sizeof(int),3,f);
+  fwrite(dailyDone,sizeof(int),3,f);
   fclose(f);
 }
 static void load_game(void){
@@ -911,6 +958,16 @@ static void load_game(void){
   fread(&lang,sizeof(int),1,f);
   area=0; fread(&area,sizeof(int),1,f);   /* 旧档没有该字段 -> 保持码头 */
   if(area<0||area>=AR_N)area=0;
+  questIdx=0; fread(&questIdx,sizeof(int),1,f);   /* 任务系统字段(旧档缺失 -> 重新开始主线) */
+  if(questIdx<0||questIdx>NMQ)questIdx=0;
+  questProg=0; fread(&questProg,sizeof(int),1,f); if(questProg<0)questProg=0;
+  mqDone=0; fread(&mqDone,sizeof(int),1,f);
+  dailyDay=0; fread(&dailyDay,sizeof(int),1,f);
+  fread(dailyId,sizeof(int),3,f); for(int i=0;i<3;i++)if(dailyId[i]<0||dailyId[i]>=5)dailyId[i]=-1;
+  fread(dailyA,sizeof(int),3,f); for(int i=0;i<3;i++)if(dailyA[i]<0)dailyA[i]=0;
+  fread(dailyN,sizeof(int),3,f); for(int i=0;i<3;i++)if(dailyN[i]<1)dailyN[i]=1;
+  fread(dailyP,sizeof(int),3,f); for(int i=0;i<3;i++)if(dailyP[i]<0)dailyP[i]=0;
+  fread(dailyDone,sizeof(int),3,f); for(int i=0;i<3;i++)if(dailyDone[i]!=1)dailyDone[i]=0;
   if(level<1)level=1;
   if(coins<0)coins=0;
   if(bagFill<0)bagFill=0; if(bagFill>64)bagFill=64;
@@ -1293,7 +1350,7 @@ static void update_reel(float dt){
       if(reelGood>=reelNeed){
         int ok=(plannedFish>=0)?plannedFish:0;
         net_report_catch(ok);
-        if(bagFill<bagSize()){bag[bagFill++]=ok;caughtCount[ok]++;xp+=FISHES[ok].exp*modXpMul;caughtToday++;}
+        if(bagFill<bagSize()){bag[bagFill++]=ok;caughtCount[ok]++;xp+=FISHES[ok].exp*modXpMul;caughtToday++;quest_on_catch(ok);}
         else add_toast(T("CHEST FULL - SELL IN SHOP","背包已满 - 去商店出售"));
         if(xp>=level*20){xp-=level*20;level++;add_toast(T("LEVEL UP!","升级了!"));}
         state=ST_PLAY;phase=PH_CATCHMSG;phaseT=0;
@@ -1971,7 +2028,12 @@ static void draw_play(void){
   snprintf(b,64,"%02d:%02d %s",(int)timeH,(int)((timeH-(int)timeH)*60),is_night()?T("NIGHT","夜晚"):T("DAY","白天"));
   draw_text(IN_W-text_w(b,1)-8,6,b,is_night()?PACKED[C_YELLOW]:PACKED[C_WHITE],1);
   snprintf(b,64,T("SPOT:%s","位置:%s"),area_name(area)); draw_text(IN_W-text_w(b,1)-8,20,b,PACKED[C_SILVER],1);
-  { const char*bs=T("B:SHOP","B:商店"); draw_text(IN_W-text_w(bs,1)-8,34,bs,PACKED[C_SILVER],1); }
+  { const char*bs=T("B:SHOP Q:QUEST","B:商店 Q:任务"); draw_text(IN_W-text_w(bs,1)-8,34,bs,PACKED[C_SILVER],1); }
+  /* HUD 常驻: 当前主线进度 (Q 打开任务日志) */
+  if(mqDone){ const char*gt=T("LAKE GUARDIAN","湖心守护者"); draw_text(8,34,gt,PACKED[C_GREEN],1); }
+  else if(questIdx<NMQ){ int cur,need; quest_cur(&cur,&need); if(cur>need)cur=need;
+    char qb[64]; snprintf(qb,64,T("Q %s %d/%d","任务 %s %d/%d"),lang?MAINQ[questIdx].cn:MAINQ[questIdx].en,cur,need);
+    draw_text(8,34,qb,PACKED[C_GOLD],1); }
   if(phase==PH_IDLE){
     if(is_night()) center_text(224,T("NIGHT: SPACE TO SLEEP TILL DAWN","夜晚·按空格睡觉到天亮"),PACKED[C_WARN],1);
     else center_text(224,T("SPACE TO CAST","按空格抛竿"),PACKED[C_WHITE],1);
@@ -2402,7 +2464,7 @@ static void update_shop(void){
   if(press.up&&menuSel>0)menuSel--;
   if(press.down&&menuSel<NSHOP-1)menuSel++;
   if(press.accept){ MENUITEM*m=&SHOPITEMS[menuSel];
-    if(menuSel==0){ if(bagFill>0){int sum=0;for(int i=0;i<bagFill;i++)sum+=FISHES[bag[i]].value;coins+=sum*modCoinMul;bagFill=0;add_toast(T("SOLD","已出售"));save_game();}
+    if(menuSel==0){ if(bagFill>0){int sum=0;for(int i=0;i<bagFill;i++)sum+=FISHES[bag[i]].value;coins+=sum*modCoinMul;bagFill=0;quest_on_sell(sum);add_toast(T("SOLD","已出售"));save_game();}
       else add_toast(T("NOTHING TO SELL","没有可卖的")); }
     else if(*m->var<m->maxown){ if(coins>=m->cost){coins-=m->cost;(*m->var)++;
         add_toast(menuSel==4?T("BOAT! WALK RIGHT TO SAIL DEEP","买了船! 向右走出海钓深水鱼"):T("PURCHASED","已购买"));save_game();} else add_toast(T("NOT ENOUGH COINS","金币不足")); }
@@ -2536,6 +2598,162 @@ static void draw_bag(void){
   center_text(266,T("ESC: BACK TO LAKE","返回:回到湖边"),PACKED[C_SILVER],1);
 }
 
+/* ============================================================
+   QUEST SYSTEM  --  主线 + 每日悬赏
+   主线按顺序推进(Q键/触屏LOG按钮打开日志); 悬赏每天天亮刷新。
+   事件钩子: 钓上鱼(quest_on_catch) / 商店卖鱼(quest_on_sell)
+   其余目标(集齐鱼种/竿等级/买船)每帧实时判定(quest_tick)。
+   ============================================================ */
+/* 主线当前进度: 返回 cur/need, type/a 供显示 */
+static void quest_cur(int*cur,int*need){
+  if(mqDone||questIdx>=NMQ){ *cur=1;*need=1; return; }
+  QUEST*q=&MAINQ[questIdx]; *need=q->need;
+  switch(q->type){
+    case QT_ANY:     *cur=questProg; break;
+    case QT_FISH:    *cur=questProg; break;
+    case QT_SPECIES:{int s=0;for(int i=0;i<NFISH;i++)if(caughtCount[i]>0)s++;*cur=s;}break;
+    case QT_ROD:     *cur=rodLevel; break;
+    case QT_BOAT:    *cur=boat?1:0; break;
+    default:        *cur=0;
+  }
+}
+static void quest_grant(int rc,int rx){
+  coins+=rc*modCoinMul; xp+=rx*modXpMul;
+  while(xp>=level*20){xp-=level*20;level++;add_toast(T("LEVEL UP!","升级了!"));}
+}
+/* 主线完成 -> 发奖并推进下一章 */
+static void quest_check(void){
+  if(mqDone||questIdx>=NMQ)return;
+  int cur,need; quest_cur(&cur,&need);
+  if(cur<need)return;
+  QUEST*q=&MAINQ[questIdx];
+  char b[48];
+  snprintf(b,48,T("QUEST DONE! +%d$","任务完成! +%d$"),q->rc);
+  add_toast(b);
+  quest_grant(q->rc,q->rx);
+  if(questIdx+1>=NMQ){
+    mqDone=1; questIdx=NMQ;
+    add_toast(T("MAIN STORY COMPLETE!","主线完成!你守护了这片湖!"));
+  }else{
+    questIdx++; questProg=0;
+    QUEST*n=&MAINQ[questIdx];
+    char c[48]; snprintf(c,48,T("NEW QUEST: %s","新任务: %s"),lang?n->cn:n->en);
+    add_toast(c);
+  }
+  save_game();
+}
+/* 每日悬赏刷新(天亮/读档触发) */
+static void quest_daily_refresh(void){
+  dailyDay=day;
+  for(int d=0;d<3;d++){
+    int t=rndi(5);
+    if(d>0&&dailyId[d-1]==t)t=(t+1+rndi(3))%5;   /* 避免重复模板 */
+    dailyId[d]=t; dailyDone[d]=0; dailyP[d]=0; dailyA[d]=0;
+    if(t==0)      dailyN[d]=4+rndi(4);            /* 钓任意鱼 4-7 条 */
+    else if(t==1){dailyA[d]=rndi(4); dailyN[d]=2+rndi(2);}  /* 浅水鱼种 x2-3 */
+    else if(t==2){dailyA[d]=3+rndi(3); dailyN[d]=2;}        /* 中级鱼种 x2 */
+    else if(t==3) dailyN[d]=40+rndi(3)*10;        /* 卖鱼赚 $40-60 */
+    else          dailyN[d]=8+rndi(3);            /* 钓任意鱼 8-10 条 */
+  }
+}
+static void quest_check_daily(void){
+  for(int d=0;d<3;d++){
+    if(dailyId[d]<0||dailyDone[d])continue;
+    if(dailyP[d]>=dailyN[d]){
+      dailyDone[d]=1;
+      quest_grant(DQ_RC[dailyId[d]],5);
+      char b[48]; snprintf(b,48,T("BOUNTY DONE! +%d$","悬赏完成! +%d$"),DQ_RC[dailyId[d]]);
+      add_toast(b);
+      save_game();
+    }
+  }
+}
+/* 钓上鱼: 主线(任意/指定鱼种) + 悬赏(任意/指定鱼种) */
+static void quest_on_catch(int fi){
+  if(!mqDone&&questIdx<NMQ){
+    QUEST*q=&MAINQ[questIdx];
+    if(q->type==QT_ANY)questProg++;
+    else if(q->type==QT_FISH&&q->a==fi)questProg++;
+  }
+  for(int d=0;d<3;d++){
+    if(dailyId[d]<0||dailyDone[d])continue;
+    int t=dailyId[d];
+    if(t==0||t==4)dailyP[d]++;
+    else if(t==1||t==2){ if(dailyA[d]==fi)dailyP[d]++; }
+  }
+  quest_check();
+  quest_check_daily();
+}
+/* 商店卖鱼: 悬赏赚钱类进度 */
+static void quest_on_sell(int sum){
+  for(int d=0;d<3;d++){
+    if(dailyId[d]<0||dailyDone[d])continue;
+    if(dailyId[d]==3)dailyP[d]+=sum;
+  }
+  quest_check_daily();
+}
+/* 每帧实时判定(集齐鱼种/装备类目标), 并在换天时刷新悬赏 */
+static void quest_tick(void){
+  if(dailyDay!=day||dailyId[0]<0)quest_daily_refresh();
+  quest_check();
+  quest_check_daily();
+}
+/* ---------- 任务日志界面 ---------- */
+static void update_quest(void){ if(press.back||press.q||press.accept)state=ST_PLAY; }
+static void draw_quest(void){
+  fill(0,0,IN_W,IN_H,PACKED[C_DIALOG]);
+  center_text(6,T("QUEST LOG","任务日志"),PACKED[C_GOLD],2);
+  { char b[32]; snprintf(b,32,T("DAY %d","第%d天"),day);
+    draw_text(IN_W-text_w(b,1)-16,8,b,PACKED[C_SILVER],1); }
+  /* ---- 主线 ---- */
+  fill(12,24,IN_W-24,72,mulc(PACKED[C_BLACK],140));
+  fill(12,24,IN_W-24,1,PACKED[C_GOLD]); fill(12,95,IN_W-24,1,PACKED[C_GOLD]);
+  fill(12,24,1,72,PACKED[C_GOLD]);     fill(IN_W-13,24,1,72,PACKED[C_GOLD]);
+  if(mqDone){
+    center_text(40,T("MAIN STORY COMPLETE","主线完成"),PACKED[C_GOLD],2);
+    center_text(64,T("YOU KEPT GRANDPA'S PROMISE - THE LAKE IS SAFE.","你兑现了爷爷的承诺——这片湖被守护住了。"),PACKED[C_GREEN],1);
+    center_text(80,T("DAILY BOUNTIES BELOW ARE YOURS","下方的每日悬赏仍可继续接"),PACKED[C_SILVER],1);
+  }else{
+    QUEST*q=&MAINQ[questIdx];
+    int cur,need; quest_cur(&cur,&need);
+    if(cur>need)cur=need;
+    char b[64];
+    snprintf(b,64,T("MAIN QUEST %d/%d","主线 %d/%d"),questIdx+1,NMQ);
+    draw_text(20,30,b,PACKED[C_SILVER],1);
+    draw_text(20,42,lang?q->cn:q->en,PACKED[C_GOLD],1);
+    draw_text(20,58,lang?q->dcn:q->den,PACKED[C_WHITE],1);
+    int bw=200;
+    fill(20,74,bw,7,mulc(PACKED[C_BLACK],190));
+    if(need>0)fill(20,74,(int)(bw*(float)cur/(float)need),7,PACKED[C_GREEN]);
+    fill(20,74,bw,1,mulc(PACKED[C_WHITE],120));
+    snprintf(b,64,"%d/%d",cur,need); draw_text(226,72,b,PACKED[C_CYAN],1);
+    snprintf(b,64,T("REWARD: $%d +%dEXP","奖励: $%d +%d经验"),q->rc,q->rx);
+    draw_text(IN_W-text_w(b,1)-20,72,b,PACKED[C_YELLOW],1);
+  }
+  /* ---- 每日悬赏 ---- */
+  draw_text(20,106,T("-- DAILY BOUNTIES (RESET AT DAWN) --","-- 每日悬赏(天亮刷新) --"),PACKED[C_SILVER],1);
+  for(int d=0;d<3;d++){
+    if(dailyId[d]<0)continue;
+    int t=dailyId[d],y=118+d*26;
+    int cur=dailyP[d]; if(cur>dailyN[d])cur=dailyN[d];
+    fill(20,y,IN_W-40,20,mulc(PACKED[C_BLACK],130));
+    fill(20,y,3,20,dailyDone[d]?PACKED[C_GREEN]:PACKED[C_GOLD]);
+    char b[64];
+    if(t==0||t==4) snprintf(b,64,T("BOUNTY: CATCH %d FISH","悬赏: 钓上%d条鱼"),dailyN[d]);
+    else if(t==1||t==2){ const char*fn=lang?FISHES[dailyA[d]].cn:FISHES[dailyA[d]].en;
+      snprintf(b,64,T("BOUNTY: %s x%d","悬赏: %s x%d"),fn,dailyN[d]); }
+    else snprintf(b,64,T("BOUNTY: EARN $%d SELLING FISH","悬赏: 卖鱼赚$%d"),dailyN[d]);
+    draw_text(30,y+3,b,dailyDone[d]?PACKED[C_GREEN]:PACKED[C_WHITE],1);
+    char p[16]; snprintf(p,16,"%d/%d",cur,dailyN[d]);
+    draw_text(352,y+3,p,dailyDone[d]?PACKED[C_GREEN]:PACKED[C_CYAN],1);
+    char r[16]; snprintf(r,16,"+$%d",DQ_RC[t]);
+    draw_text(400,y+3,r,PACKED[C_YELLOW],1);
+    if(dailyDone[d])draw_text(446,y+3,T("DONE","完成"),PACKED[C_GREEN],1);
+  }
+  center_text(210,T("CATCH, EARN, EXPLORE - THE LAKE REMEMBERS.","垂钓,赚钱,探索——这片湖记得一切。"),PACKED[C_SILVER],1);
+  center_text(252,T("Q/ESC: BACK   E: FISH LOG   B: SHOP","Q/ESC返回   E图鉴   B商店"),PACKED[C_SILVER],1);
+}
+
 /* ---------- intro / CG (+title lang) ---------- */
 static const char* IN_EN[5]={
   "A STORM TOOK GRANDPA'S BOAT...",
@@ -2564,7 +2782,7 @@ static void draw_lightning_rnd(float t){
 static void update_intro(float dt){
   introT+=dt;
   slide=(int)(introT/SLIDE_T);
-  if(slide>4||press.accept){ add_toast(lang?T("MOVE:<->/AD CAST:SPACE NIGHT:SLEEP","移动:←→/AD 抛竿:空格 夜晚:空格睡觉"):T("MOVE:<->/AD CAST:SPACE NIGHT:SLEEP","移动:←→/AD 抛竿:空格 夜晚:空格睡觉"));
+  if(slide>4||press.accept){ add_toast(lang?T("MOVE:<->/AD CAST:SPACE Q:QUEST","移动:←→/AD 抛竿:空格 Q:任务"):T("MOVE:<->/AD CAST:SPACE Q:QUEST","移动:←→/AD 抛竿:空格 Q:任务"));
     state=ST_PLAY;phase=PH_IDLE;phaseT=0; }
 }
 static void draw_intro(void){
@@ -2695,6 +2913,8 @@ static void update_top(float dt){
   if(state==ST_PLAY){
     if(press.e){state=ST_BAG;menuSel=0;}
     if(press.b){state=ST_SHOP;menuSel=0;keeperLine=-1;}
+    if(press.q){state=ST_QUEST;}
+    quest_tick();
   }
   switch(state){
     case ST_TITLE: update_title(); break;
@@ -2705,6 +2925,7 @@ static void update_top(float dt){
     case ST_SHOP: update_shop(); break;
     case ST_BAG: update_bag(); break;
     case ST_LANMENU: update_lanmenu(); break;
+    case ST_QUEST: update_quest(); break;
     default: break;
   }
 }
@@ -2719,6 +2940,7 @@ static void draw_top(void){
     case ST_SHOP: draw_shop(); break;
     case ST_BAG: draw_bag(); break;
     case ST_LANMENU: draw_lanmenu(); break;
+    case ST_QUEST: draw_quest(); break;
     default: break;
   }
   if(toastT>0){fill(0,264,IN_W,22,PACKED[C_BLACK]);center_text(272,toast,PACKED[C_YELLOW],1);}
@@ -2848,6 +3070,15 @@ static void selftest(SDL_Window*win,SDL_Renderer*ren,SDL_Texture*tex){
   state=ST_PLAY; phase=PH_IDLE; pAnim=PA_IDLE; timeH=21.0f;
   st_wait(ren,tex,0.2f); st_shot("t11_night");
   timeH=14.0f; touchUI=0; vbOn[0]=vbOn[6]=0;
+  /* 12c) 任务日志: 主线进度 + 每日悬赏 (EN/CN) */
+  state=ST_QUEST; lang=0; questIdx=2; questProg=0;
+  dailyId[0]=0; dailyN[0]=5; dailyP[0]=2;
+  dailyId[1]=2; dailyA[1]=4; dailyN[1]=2; dailyP[1]=1;
+  dailyId[2]=3; dailyN[2]=50; dailyP[2]=20; dailyDay=day;
+  st_wait(ren,tex,0.3f); st_shot("17_quest_en");
+  lang=1; st_wait(ren,tex,0.3f); st_shot("18_quest_cn");
+  questIdx=0; questProg=0;
+  for(int d=0;d<3;d++){dailyId[d]=-1;dailyP[d]=0;dailyDone[d]=0;}
   /* 13) save/load + mod round-trip self-check (SELFTEST builds only) */
   printf("== SAVE/MOD CHECK ==\n");
   coins=1234; xp=77; level=5; day=12; cs_skin=3; bagFill=2; bag[0]=1; bag[1]=9;
@@ -2963,6 +3194,7 @@ int main(int argc,char*argv[]){
           case SDL_SCANCODE_S: case SDL_SCANCODE_DOWN: press.down=1;break;
           case SDL_SCANCODE_E: press.e=1;break;
           case SDL_SCANCODE_B: press.b=1;break;
+          case SDL_SCANCODE_Q: press.q=1;break;
           case SDL_SCANCODE_M: if(state==ST_TITLE) lan_menu_open(); break;
           case SDL_SCANCODE_1: if(state==ST_TITLE)lang=0;break;
           case SDL_SCANCODE_2: if(state==ST_TITLE)lang=1;break;
